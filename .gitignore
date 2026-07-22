@@ -1,2 +1,6 @@
 device/.pio/
 .DS_Store
+
+# Per-device: written by first-flash.sh from YOUR device's MAC. Not shipped, so
+# a fresh clone never carries someone else's device ID.
+.resident-device-id

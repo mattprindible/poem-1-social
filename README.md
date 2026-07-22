@@ -50,6 +50,14 @@ pio run -e poem1 -t upload  # flash over USB
 > completes). Once this Resident firmware is running it only refreshes when a
 > Lua app draws, so subsequent reflashes are safe when no app is active.
 
+> [!NOTE]
+> A one-command, guided **first-time install** (stock → Resident, with the
+> safety timing handled for you) is still being finalized — we want to verify it
+> end-to-end on a genuine factory-stock Poem/1 first. If you have a stock unit
+> and would like to help validate it, please open an issue. For now, follow the
+> two steps above and mind the hazard warning. Reflashing a device that already
+> runs Resident is verified — see [Staying in sync](#staying-in-sync-with-resident).
+
 On first boot it reuses the Wi-Fi credentials already in NVS (same storage the
 stock firmware used), connects to the Resident relay, and shows an idle screen
 with the **device ID** — you'll need that to push apps.
@@ -76,12 +84,20 @@ so you never clone, fork, or merge it — you just pull the latest into your bui
 PlatformIO caches it after the first build, so use the helper:
 
 ```sh
-./sync.sh           # fetch latest Resident + rebuild
-./sync.sh --flash   # fetch latest Resident + rebuild + reflash over USB
+./sync.sh                  # fetch latest Resident + rebuild
+./sync.sh --flash          # + safely reflash over USB (quiesces the panel first)
+./sync.sh --flash --force  # + skip the safety abort if the device is unreachable
 ```
 
 That's the whole sync loop. Because this project never modifies Resident, there
 are no merge conflicts — new Resident features just show up on the next `sync.sh`.
+
+`--flash` protects the e-ink panel automatically: before esptool resets the
+board it pushes `standby.lua` and waits for that refresh to finish, so the reset
+can't land mid-refresh (which would damage the panel — see the warning above).
+If it can't reach the device to quiesce it, `--flash` **aborts** rather than
+flash blind; re-run with `--force` only when you can see the screen is already
+idle or in its screensaver.
 
 ## Notes
 
@@ -90,3 +106,8 @@ are no merge conflicts — new Resident features just show up on the next `sync.
   unreachable, local time falls back to UTC.)
 - `device/partitions.csv` matches the stock Poem/1 layout, so a flash lands in
   an app slot and never clobbers NVS/SPIFFS.
+- `sync.sh --flash` (reflashing a device already on Resident) quiesces the panel
+  for you: it pushes `standby.lua`, waits for that refresh to finish, then
+  flashes — so the reset can't land mid-refresh. It aborts rather than flash
+  blind if it can't reach the device; `--force` overrides only when you can see
+  the screen is already idle.
