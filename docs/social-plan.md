@@ -1,8 +1,15 @@
 # Poem/1 Social — design plan
 
-**Status:** design agreed 2026-07-22. Phase 0 built and hardware-verified the
-same day — the device-side escape hatch, a self-hosted hub (`server/`, deployed),
-and runtime hub configuration. Nothing social exists yet; identity is next.
+**Status:** design agreed 2026-07-22. Phase 0 (device escape hatch, self-hosted
+hub, runtime hub config) and phase 1 (atproto identity: OAuth login, hub record
+published and discoverable) are both built and verified against live
+infrastructure. Federation — hub-to-hub requests — is next.
+
+**Namespace note:** records use `is.mfd.poem1.*`, under a domain the hub owner
+controls. `tech.inanimate.*` would be the natural long-term home given Poem/1 and
+Resident are both Matt Webb's, but claiming a namespace on someone else's domain
+before asking is not ours to do. Migration is cheap while few records exist — it
+is one of the reasons to have that courtesy conversation early.
 Supersedes the earlier "self-hosted Worker" napkin sketch (auth + error feedback),
 which was two chores bundled together rather than a design.
 
@@ -51,7 +58,7 @@ inbound requests. **Discovery does not involve the hub at all.**
 ## Identity, discovery, and revocation: one record
 
 Trust is anchored in a record the owner publishes in their own atproto repo — say
-`tech.inanimate.resident.hub` — containing the hub's **endpoint URL** and its
+`is.mfd.poem1.hub` — containing the hub's **endpoint URL** and its
 **public key**.
 
 Each hub generates its own keypair and signs its own outbound requests. A
@@ -91,7 +98,7 @@ identity. The repo record is available to everyone right now.
 ## Apps are records too
 
 Apps are **durable artifacts, not throwaway pushes**. An app is an atproto record
-(`tech.inanimate.resident.app`) holding the Lua source plus metadata.
+(`is.mfd.poem1.app`) holding the Lua source plus metadata.
 
 This gives, for free: authorship and provenance (records are signed), versioning
 and history (CIDs, rkeys, timestamps), updates as record updates, and portability
