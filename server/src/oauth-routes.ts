@@ -37,6 +37,25 @@ async function getOwner(env: Env): Promise<string | undefined> {
   return hubStore(env).getItem(NS.hub, "owner")
 }
 
+/**
+ * Walk the `cause` chain.
+ *
+ * The atproto errors wrap their real reason and present a generic message —
+ * `JwtCreateError` in particular defaults to "Unable to create JWT" and hides
+ * the underlying `JwkError` entirely. Reporting only `err.message` for those
+ * says nothing at all, which cost a debugging round trip through a login flow
+ * that can only be exercised by a human at a browser. So report the chain.
+ */
+function describeError(err: unknown, depth = 0): unknown {
+  if (depth > 5 || err == null) return String(err)
+  if (!(err instanceof Error)) return String(err)
+  const out: Record<string, unknown> = { name: err.name, message: err.message }
+  const code = (err as { code?: unknown }).code
+  if (code !== undefined) out.code = code
+  if (err.cause !== undefined) out.cause = describeError(err.cause, depth + 1)
+  return out
+}
+
 export async function routeOAuthRequest(request: Request, env: Env): Promise<Response | null> {
   const url = new URL(request.url)
   const origin = url.origin
@@ -163,7 +182,11 @@ export async function routeOAuthRequest(request: Request, env: Env): Promise<Res
       return json({ error: "identity_error", message: err.message }, err.status)
     }
     return json(
-      { error: "oauth_error", message: err instanceof Error ? err.message : String(err) },
+      {
+        error: "oauth_error",
+        message: err instanceof Error ? err.message : String(err),
+        detail: describeError(err),
+      },
       500,
     )
   }

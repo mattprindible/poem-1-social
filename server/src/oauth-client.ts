@@ -53,7 +53,21 @@ const workersFetch: typeof globalThis.fetch = (input, init?) => {
 }
 
 const runtimeImplementation: RuntimeImplementation = {
-  createKey: (algs) => WebcryptoKey.generate([...algs]),
+  // `extractable: true` is REQUIRED here, and the reason is not obvious.
+  //
+  // WebcryptoKey.fromKeypair exports the PUBLIC key when the private key is
+  // non-extractable (the default), while WebcryptoKey.isPrivate still returns
+  // true unconditionally. So a default-generated key reports a `privateJwk`
+  // that silently contains no `d`. In memory it signs perfectly well, because
+  // WebcryptoKey overrides getKeyObj to use the live CryptoKey — the damage
+  // only appears after the key is persisted and revived, as a public key that
+  // cannot sign: "CryptoKey instances for asymmetric algorithm signing must be
+  // of type private".
+  //
+  // A browser client never notices because it keeps the CryptoKey in IndexedDB.
+  // A server that serialises sessions does. keyToJwk below now also refuses a
+  // JWK with no `d`, so this cannot regress quietly.
+  createKey: (algs) => WebcryptoKey.generate([...algs], crypto.randomUUID(), { extractable: true }),
   getRandomValues: (length) => crypto.getRandomValues(new Uint8Array(length)),
   digest: async (data, alg) => {
     // 'sha256' -> 'SHA-256', which is what WebCrypto expects.
@@ -71,11 +85,25 @@ async function reviveKey(jwk: unknown) {
   return JoseKey.fromJWK(jwk as Record<string, unknown>)
 }
 
-function keyToJwk(key: { privateJwk?: unknown }) {
-  if (!key.privateJwk) {
+function keyToJwk(key: { privateJwk?: unknown; alg?: string }) {
+  const jwk = key.privateJwk as Record<string, unknown> | undefined
+  if (!jwk) {
     throw new Error("DPoP key is not extractable — cannot persist the session")
   }
-  return key.privateJwk
+  // `privateJwk` being present is NOT proof the key is private: a
+  // non-extractable WebcryptoKey hands back its public JWK while still
+  // reporting isPrivate === true. Without `d` the revived key cannot sign, and
+  // the failure surfaces much later as an opaque "Unable to create JWT".
+  if (typeof jwk.d !== "string") {
+    throw new Error(
+      "refusing to persist a DPoP key with no private component — " +
+        "it was generated non-extractable and would be unusable once revived",
+    )
+  }
+  // WebCrypto omits `alg` when exporting an EC JWK, so carry the key's own
+  // algorithm across explicitly rather than leaving the revived key to infer it
+  // from the curve.
+  return key.alg && !jwk.alg ? { ...jwk, alg: key.alg } : jwk
 }
 
 function makeStateStore(env: Env): StateStore {
