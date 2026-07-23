@@ -11,5 +11,5 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["src", "env.d.ts"]
+  "include": ["src", "env.d.ts", "worker-env.d.ts"]
 }
