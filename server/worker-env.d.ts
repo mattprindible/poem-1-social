@@ -1,23 +1,20 @@
-// Bindings and secrets that `wrangler types` does not produce for us.
+// Declarations `wrangler types` cannot produce, merged into the generated Env.
 //
-// Secrets live in Cloudflare's secret store rather than wrangler.jsonc, so they
-// can never be generated. The HubStore namespace is declared here too because
-// `wrangler types` refuses to regenerate over the existing env.d.ts.
-// TypeScript merges this into the generated Env.
+// wrangler discovers bindings from wrangler.jsonc and secrets from .dev.vars, so
+// HUB_PRIVATE_JWK and the Durable Object namespaces come from env.d.ts and are
+// deliberately not repeated here.
 //
-// Install the key with: npx wrangler secret put HUB_PRIVATE_JWK
-// Generate one with:    npm run gen-key
+// HUB_ADMIN_TOKEN is absent from .dev.vars on purpose — it is an optional
+// production credential, and a hub that never sets one is cookie-only rather
+// than accidentally open — so it is the one thing that has to be declared by
+// hand.
+//
+// Install with: npx wrangler secret put HUB_ADMIN_TOKEN
 interface Env {
-  /** ES256 (P-256) private JWK, JSON-encoded. The hub's OAuth client key. */
-  HUB_PRIVATE_JWK?: string;
-
   /**
    * Shared secret accepted as `Authorization: Bearer` on owner-only routes, for
-   * CLI and automation. Optional — when unset, those routes are cookie-only.
-   * Install with: npx wrangler secret put HUB_ADMIN_TOKEN
+   * CLI and automation, which have no cookie jar. Optional: when unset, those
+   * routes accept only the browser session cookie issued by /oauth/login.
    */
   HUB_ADMIN_TOKEN?: string;
-
-  /** Singleton store for hub-level state: OAuth sessions and the owner DID. */
-  HubStore: DurableObjectNamespace<import("./src/hub-store").HubStore>;
 }

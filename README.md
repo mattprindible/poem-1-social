@@ -1,8 +1,14 @@
-# Poem/1 — Resident
+# Poem/1 — Resident, and a social layer for it
 
 Run [Resident](https://github.com/inanimate-tech/resident) on a
 [Poem/1](https://poem.town). Flash this firmware once and your Poem/1 becomes a
 sandboxed Lua device you push apps to over Wi-Fi — no reflashing to iterate.
+
+Then, optionally, let **people you follow** push apps to it too. The bet: trust
+implicit in a social graph affords more than an untrusted sandbox model normally
+allows — enough to let mutuals deploy code to each other's devices, while you
+keep a physical button that stops anything, instantly, whoever sent it. See
+[`docs/social-plan.md`](docs/social-plan.md).
 
 Poem/1 and Resident are both by Matt Webb, and this project treats the Poem/1 as
 **just another ESP32 board**: it depends on **stock, unmodified Resident** and
@@ -71,7 +77,15 @@ cat my-app.lua | ./send-app.sh --device-id <id>
 ```
 
 Apps in [`device-apps/`](device-apps/): `minute-clock`, `battery-watch`,
-`hello-status`, `first-light`, `hw-survey`, `standby`.
+`hello-status`, `first-light`, `hw-survey`, `standby`, plus two test fixtures —
+`runaway` (misbehaves deliberately, to exercise the escape hatch) and
+`federated-hello` (renders who pushed it, for federation tests).
+
+> [!TIP]
+> **Hold the button for ~3 seconds to stop whatever is running** and forget it,
+> so it does not return after a reboot. It is polled outside Lua's event
+> dispatch, so an app cannot suppress it. That matters most once apps can arrive
+> from other people — see below.
 
 ### Where pushes go
 
@@ -101,8 +115,61 @@ more. If it ever can't reach a stored hub, it falls back to the public relay for
 the rest of that boot — keeping NVS intact and leaving you a way in — so a typo'd
 hostname costs a reboot, never a reflash.
 
-Why this matters, and where it's going:
-[`docs/social-plan.md`](docs/social-plan.md).
+## The social layer
+
+Once you own a hub, it can carry an identity — and once it has one, other
+people's hubs can find it, verify it, and (if you follow each other) push apps to
+your device.
+
+```sh
+cd server
+npm run gen-key | npx wrangler secret put HUB_PRIVATE_JWK
+npx wrangler deploy
+```
+
+Then open `https://<your-hub>/oauth/login` and sign in with Bluesky. The first
+account to sign in **claims** the hub; afterwards only that DID may. Signing in
+publishes a record into your own atproto repo:
+
+```
+at://<your-did>/is.mfd.poem1.hub/self
+```
+
+That single record does three jobs — **discovery** (where your hub is),
+**authentication** (which key speaks for you), and **revocation** (delete it and
+the old key is dead). It lives in your repo rather than in the hub, so it
+outlives the Worker, the hostname, and this project. Moving hubs is a record
+update.
+
+Discovery needs no index and no account:
+
+```sh
+curl https://<your-hub>/hub/peer/someone.bsky.social
+```
+
+That resolves handle → DID → PDS → their hub record, entirely from public
+infrastructure.
+
+### Pushing to someone else's device
+
+```sh
+curl -X POST https://<your-hub>/federation/push \
+  -H "Authorization: Bearer $HUB_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"to":"friend.bsky.social","code":"'"$(cat app.lua)"'"}'
+```
+
+Their hub accepts it only if **both** hold:
+
+1. the signature verifies against the key they can see in *your* repo, and
+2. the two of you **follow each other** on Bluesky.
+
+Social trust sets **policy** (who may push); it never changes **mechanism** (what
+pushed code can do). The Lua sandbox, driver allowlists and e-ink flip limits are
+untouched — and the 3-second button hold stops anything, whoever sent it.
+
+Routes, deployment and the trust model in detail: [`server/README.md`](server/README.md).
+Why it is built this way: [`docs/social-plan.md`](docs/social-plan.md).
 
 ## Staying in sync with Resident
 

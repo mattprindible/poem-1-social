@@ -105,17 +105,3 @@ export async function rotateHubKey(env: Env): Promise<PublicJwkEC> {
   await hubStore(env).delItem(NS.hub, KEY_ITEM)
   return getHubPublicJwk(env)
 }
-
-/** Sign bytes with the federation key. Used for hub-to-hub requests. */
-export async function signWithHubKey(env: Env, data: Uint8Array): Promise<Uint8Array> {
-  const { privateJwk } = await getHubKey(env)
-  const key = await crypto.subtle.importKey(
-    "jwk",
-    privateJwk,
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["sign"],
-  )
-  const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, data)
-  return new Uint8Array(sig)
-}
