@@ -14,6 +14,12 @@
       {
         "class_name": "DeviceAgent",
         "name": "DeviceAgent"
+      },
+      {
+        // Hub-level state (OAuth sessions, owner DID) as opposed to per-device
+        // relay state. A singleton — one hub, one owner.
+        "class_name": "HubStore",
+        "name": "HubStore"
       }
     ]
   },
@@ -21,6 +27,10 @@
     {
       "new_sqlite_classes": ["DeviceAgent"],
       "tag": "v1"
+    },
+    {
+      "new_sqlite_classes": ["HubStore"],
+      "tag": "v2"
     }
   ],
   "observability": {

@@ -8,10 +8,12 @@ import {
   KeyError,
 } from "./oauth"
 import { IdentityError, resolveIdentity } from "./identity"
+import { HubStore } from "./hub-store"
+import { routeOAuthRequest } from "./oauth-routes"
 
-// Cloudflare needs the Durable Object class re-exported at the worker entry
-// so it can instantiate it for the binding declared in wrangler.jsonc.
-export { DeviceAgent }
+// Cloudflare needs the Durable Object classes re-exported at the worker entry
+// so it can instantiate them for the bindings declared in wrangler.jsonc.
+export { DeviceAgent, HubStore }
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -75,6 +77,9 @@ export default {
 
     const hub = await routeHubRequest(request, env)
     if (hub) return hub
+
+    const oauth = await routeOAuthRequest(request, env)
+    if (oauth) return oauth
 
     return new Response("Not found", { status: 404 })
   },
