@@ -15,9 +15,12 @@ export interface ClientMetadata {
   client_id: string;
   client_name: string;
   client_uri: string;
-  redirect_uris: string[];
-  grant_types: string[];
-  response_types: string[];
+  /** Non-empty tuple: the OAuth client types require at least one entry. */
+  redirect_uris: [string, ...string[]];
+  // Exact tuples, not string[] — the OAuth client's types require non-empty
+  // tuples of known literals.
+  grant_types: ["authorization_code", "refresh_token"];
+  response_types: ["code"];
   scope: string;
   application_type: "web";
   token_endpoint_auth_method: "private_key_jwt";
