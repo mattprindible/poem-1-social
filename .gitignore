@@ -1,4 +1,5 @@
-device/.pio/
+# PlatformIO build artifacts and fetched libraries, in ANY device project
+.pio/
 .DS_Store
 
 # Per-device: written by first-flash.sh from YOUR device's MAC. Not shipped, so
@@ -8,3 +9,6 @@ device/.pio/
 # Per-person: your own hub URL (see server/). Not shipped, so a fresh clone
 # falls back to the public relay rather than pushing to someone else's hub.
 .resident-hub-url
+
+# Voice worker local secrets (OPENAI_API_KEY lives in Cloudflare secrets)
+voice/server/.dev.vars
