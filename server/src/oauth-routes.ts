@@ -3,6 +3,7 @@ import { IdentityError, resolveIdentity } from "./identity"
 import { createOAuthClient } from "./oauth-client"
 import { publishHubRecord } from "./hub-record"
 import { KeyError } from "./oauth"
+import { AuthError, clearOwnerSession, createOwnerSession, requireOwner } from "./auth"
 
 // The hub's login flow. One hub, one owner: the first account to complete a
 // login CLAIMS the hub, and after that only that DID may sign in.
@@ -14,7 +15,7 @@ import { KeyError } from "./oauth"
 // and log in within the same minute. Re-claiming requires /oauth/logout, which
 // only the current owner can call.
 
-const html = (body: string, status = 200) =>
+const html = (body: string, status = 200, extraHeaders: Record<string, string> = {}) =>
   new Response(
     `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Poem/1 hub</title>
@@ -25,7 +26,7 @@ const html = (body: string, status = 200) =>
  input{flex:1;padding:.5rem;font:inherit} button{padding:.5rem 1rem;font:inherit}
  @media(prefers-color-scheme:dark){body{background:#111;color:#eee}.err{color:#ff6b81}}
 </style>${body}`,
-    { status, headers: { "Content-Type": "text/html; charset=utf-8" } },
+    { status, headers: { "Content-Type": "text/html; charset=utf-8", ...extraHeaders } },
   )
 
 const json = (body: unknown, status = 200) =>
@@ -141,11 +142,21 @@ export async function routeOAuthRequest(request: Request, env: Env): Promise<Res
           `<p>Retry with <code>POST /hub/publish</code>.</p>`
       }
 
+      // Completing the flow is what proves ownership, so this is where the
+      // browser gets a credential for the hub's own control surface.
+      const cookie = await createOwnerSession(env, did)
+
       return html(
         `<h1>Signed in</h1><p>This hub is authorized as <code>${did}</code>.</p>
          ${published}
+         <p>You now hold an owner session in this browser, which is what the
+            hub's control routes require. For CLI use, set a
+            <code>HUB_ADMIN_TOKEN</code> secret and send it as
+            <code>Authorization: Bearer</code>.</p>
          <p>Details: <a href="/oauth/session">/oauth/session</a> ·
             <a href="/hub/record">/hub/record</a></p>`,
+        200,
+        { "Set-Cookie": cookie },
       )
     }
 
@@ -182,17 +193,27 @@ export async function routeOAuthRequest(request: Request, env: Env): Promise<Res
 
     // ── Unbind the hub ───────────────────────────────────────────────────
     if (path === "/oauth/logout" && request.method === "POST") {
+      // Unauthenticated, this was step one of a takeover: unclaim the hub, then
+      // claim it yourself.
+      await requireOwner(env, request)
+      const cookie = await clearOwnerSession(env, request)
       const owner = await getOwner(env)
       if (owner) {
         const client = await createOAuthClient(env, origin)
         await client.revoke(owner).catch(() => {})
       }
       await hubStore(env).clearAll()
-      return json({ ok: true, message: "hub unclaimed" })
+      return new Response(JSON.stringify({ ok: true, message: "hub unclaimed" }, null, 2), {
+        status: 200,
+        headers: { "Content-Type": "application/json; charset=utf-8", "Set-Cookie": cookie },
+      })
     }
 
     return null
   } catch (err) {
+    if (err instanceof AuthError) {
+      return json({ error: "unauthorized", message: err.message }, err.status)
+    }
     if (err instanceof KeyError) {
       return json({ error: "key_unavailable", message: err.message }, 503)
     }

@@ -11,6 +11,13 @@ interface Env {
   /** ES256 (P-256) private JWK, JSON-encoded. The hub's OAuth client key. */
   HUB_PRIVATE_JWK?: string;
 
+  /**
+   * Shared secret accepted as `Authorization: Bearer` on owner-only routes, for
+   * CLI and automation. Optional — when unset, those routes are cookie-only.
+   * Install with: npx wrangler secret put HUB_ADMIN_TOKEN
+   */
+  HUB_ADMIN_TOKEN?: string;
+
   /** Singleton store for hub-level state: OAuth sessions and the owner DID. */
   HubStore: DurableObjectNamespace<import("./src/hub-store").HubStore>;
 }

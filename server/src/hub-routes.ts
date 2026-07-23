@@ -12,6 +12,7 @@ import { IdentityError, resolveIdentity } from "./identity"
 import { createOAuthClient } from "./oauth-client"
 import { KeyError } from "./oauth"
 import { describeError, getOwner } from "./oauth-routes"
+import { AuthError, requireOwner } from "./auth"
 
 // Routes for the hub's published identity, and for discovering other people's.
 //
@@ -59,6 +60,7 @@ export async function routeHubIdentityRequest(
     // a caller cannot steer what gets written. It is also published
     // automatically after a successful login, making this a manual re-trigger.
     if (path === "/hub/publish" && request.method === "POST") {
+      await requireOwner(env, request)
       const { session, error } = await ownerSession(env, origin)
       if (error) return error
       const result = await publishHubRecord(env, session!, origin)
@@ -77,6 +79,7 @@ export async function routeHubIdentityRequest(
 
     // ── Revoke ───────────────────────────────────────────────────────────
     if (path === "/hub/record" && request.method === "DELETE") {
+      await requireOwner(env, request)
       const { session, error } = await ownerSession(env, origin)
       if (error) return error
       await deleteHubRecord(session!)
@@ -85,6 +88,7 @@ export async function routeHubIdentityRequest(
 
     // ── Rotate the federation key, then republish ────────────────────────
     if (path === "/hub/rotate-key" && request.method === "POST") {
+      await requireOwner(env, request)
       const { session, error } = await ownerSession(env, origin)
       if (error) return error
       const publicKey = await rotateHubKey(env)
@@ -121,6 +125,9 @@ export async function routeHubIdentityRequest(
 
     return null
   } catch (err) {
+    if (err instanceof AuthError) {
+      return json({ error: "unauthorized", message: err.message }, err.status)
+    }
     if (err instanceof KeyError) {
       return json({ error: "key_unavailable", message: err.message }, 503)
     }
