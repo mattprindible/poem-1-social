@@ -11,6 +11,7 @@ import { IdentityError, resolveIdentity } from "./identity"
 import { HubStore } from "./hub-store"
 import { routeOAuthRequest } from "./oauth-routes"
 import { routeHubIdentityRequest } from "./hub-routes"
+import { routeFederationRequest } from "./federation-routes"
 
 // Cloudflare needs the Durable Object classes re-exported at the worker entry
 // so it can instantiate them for the bindings declared in wrangler.jsonc.
@@ -81,6 +82,9 @@ export default {
 
     const oauth = await routeOAuthRequest(request, env)
     if (oauth) return oauth
+
+    const federation = await routeFederationRequest(request, env)
+    if (federation) return federation
 
     const hubIdentity = await routeHubIdentityRequest(request, env)
     if (hubIdentity) return hubIdentity
