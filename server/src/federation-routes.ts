@@ -11,6 +11,7 @@ import { fetchHubRecordFor } from "./hub-record"
 import { NS, hubStore } from "./hub-store"
 import { IdentityError, resolveIdentity } from "./identity"
 import { describeError, getOwner } from "./oauth-routes"
+import { AuthError, requireOwner } from "./auth"
 
 // The federated push path.
 //
@@ -64,6 +65,9 @@ export async function routeFederationRequest(
     // Stored on the hub rather than supplied per-push, so a device ID never
     // travels between hubs.
     if (path === "/hub/device") {
+      // GET is guarded too: a device ID is effectively a credential on the
+      // Resident protocol, so this must not be a public read.
+      await requireOwner(env, request)
       if (request.method === "GET") {
         const deviceId = await getDeviceId(env)
         return deviceId ? json({ deviceId }) : json({ deviceId: null }, 404)
@@ -81,6 +85,9 @@ export async function routeFederationRequest(
 
     // ── Outbound: push an app to someone else's device ───────────────────
     if (path === "/federation/push" && request.method === "POST") {
+      // Without this, a stranger could make this hub push arbitrary code to
+      // every one of its owner's mutuals, signed as the owner.
+      await requireOwner(env, request)
       const owner = await getOwner(env)
       if (!owner) {
         return json({ error: "unclaimed", message: "sign in at /oauth/login first" }, 409)
@@ -209,6 +216,9 @@ export async function routeFederationRequest(
 
     return null
   } catch (err) {
+    if (err instanceof AuthError) {
+      return json({ error: "unauthorized", message: err.message }, err.status)
+    }
     if (err instanceof FederationError) {
       return json({ error: "federation_error", message: err.message }, err.status)
     }

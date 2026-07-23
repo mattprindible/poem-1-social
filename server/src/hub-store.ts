@@ -57,6 +57,8 @@ export const NS = {
   hub: "hub",
   /** Seen federation nonces, for replay rejection inside the skew window. */
   nonce: "fed-nonce",
+  /** Browser sessions for the owner's control surface, keyed by session id. */
+  ui: "ui-session",
 } as const
 
 export function hubStore(env: Env): DurableObjectStub<HubStore> {

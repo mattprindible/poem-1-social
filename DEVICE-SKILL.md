@@ -73,6 +73,25 @@ function on_event(ctx, event)
 end
 ```
 
+> [!IMPORTANT]
+> **A hold of ~3 seconds is reserved by the firmware.** Holding the button that
+> long stops the running app and forgets it, so the device returns to its idle
+> screen and the app does not come back after a reboot.
+>
+> This is the user's escape hatch, and it exists because apps can arrive from
+> other people (see [`docs/social-plan.md`](docs/social-plan.md)). It is polled
+> in the main loop, outside Lua's event dispatch, so **an app cannot suppress
+> it** — deliberately.
+>
+> Practical consequence for your app: **don't build interactions around holding
+> the button for 3s or more.** Taps and short holds are yours; a long hold
+> belongs to the user. Nothing stops you reading `button.is_down()` during a
+> hold, just don't expect your app to still be running at the end of a long one.
+>
+> It cannot save a user from an app that wedges the Lua VM in a tight loop —
+> nothing in the main loop runs then. Power-cycling is the backstop, which is
+> why the app is also *forgotten* rather than merely stopped.
+
 ### `led` — the hidden green LED (GPIO0)
 
 ```lua

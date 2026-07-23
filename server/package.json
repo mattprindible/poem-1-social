@@ -12,6 +12,9 @@
     "gen-key": "node scripts/gen-key.mjs"
   },
   "dependencies": {
+    "@atproto-labs/did-resolver": "^0.3.5",
+    "@atproto-labs/handle-resolver": "^0.4.6",
+    "@atproto/jwk-jose": "^0.2.4",
     "@atproto/jwk-webcrypto": "^0.3.4",
     "@atproto/oauth-client": "^0.7.11",
     "@inanimate/resident": "^0.1.0",
