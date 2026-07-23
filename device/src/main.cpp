@@ -12,7 +12,19 @@
 #include "ButtonDriver.h"
 #include "ProbeDrivers.h"
 
-static constexpr const char* RESIDENT_HOST = "resident.inanimate.tech";
+// Your own hub (server/), not the public relay at resident.inanimate.tech.
+// On the public relay the device ID is effectively the credential — anyone who
+// knows it can push code — so self-hosting comes before anything social. See
+// docs/social-plan.md.
+//
+// Compile-time on purpose: one owner points at one hub for months at a time.
+// Two consequences to remember. Moving hubs needs a reflash, and distributing
+// this to other people means per-person builds rather than one shared binary.
+//
+// TODO before this repo goes public: this is a personal workers.dev subdomain.
+// Parameterise it (build flag with the public relay as the default) so a fresh
+// clone doesn't ship someone else's hub.
+static constexpr const char* RESIDENT_HOST = "poem1-hub.service-cloudflare-442.workers.dev";
 static constexpr uint16_t RESIDENT_PORT = 443;
 
 static constexpr uint8_t BUTTON_PIN = 2;
