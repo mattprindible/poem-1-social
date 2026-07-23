@@ -93,7 +93,7 @@ export async function routeFederationRequest(
         return json({ error: "unclaimed", message: "sign in at /oauth/login first" }, 409)
       }
 
-      const body = (await request.json()) as { to?: string; code?: string }
+      const body = (await request.json()) as { to?: string; code?: string; force?: boolean }
       if (!body.to || !body.code) {
         return json({ error: "bad_request", message: "need { to, code }" }, 400)
       }
@@ -111,11 +111,16 @@ export async function routeFederationRequest(
         )
       }
 
-      // Check our own side of the relationship first. The recipient will check
-      // it too and their answer is the one that counts, but failing here gives
-      // a far better message than a remote 403.
+      // Check our own side of the relationship first. The recipient checks it
+      // too and THEIR answer is the one that counts — this is a courtesy so the
+      // common case fails with a good local message instead of a remote 403.
+      //
+      // `force` skips this advisory check and lets the recipient decide. It
+      // cannot grant access: the recipient's check is the one that enforces.
+      // Useful when the two sides disagree (graph propagation lag), and it is
+      // what makes the recipient's enforcement observable rather than masked.
       const rel = await getRelationship(owner, recipient.did)
-      if (!rel.mutual) {
+      if (!rel.mutual && !body.force) {
         return json(
           {
             error: "not_mutual",
