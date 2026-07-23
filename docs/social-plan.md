@@ -1,9 +1,19 @@
 # Poem/1 Social — design plan
 
-**Status:** design agreed 2026-07-22. Phase 0 (device escape hatch, self-hosted
-hub, runtime hub config) and phase 1 (atproto identity: OAuth login, hub record
-published and discoverable) are both built and verified against live
-infrastructure. Federation — hub-to-hub requests — is next.
+**Status:** design agreed 2026-07-22; **the core bet is proven as of
+2026-07-23.** Phase 0 (device escape hatch, self-hosted hub, runtime hub
+config), phase 1 (atproto identity: OAuth login, hub record published and
+discoverable) and federation (signed hub-to-hub push gated on mutual follows)
+are all built and verified against live infrastructure.
+
+A second account's hub pushed a Lua app to this device — two hubs, two accounts,
+one Poem/1, no shared secrets and no central service. The sender proved itself
+with a key published in its own repo; the recipient checked the real Bluesky
+graph for a mutual follow; and the physical hold-to-stop escape hatch stopped
+the foreign app afterwards. Social trust set policy, the owner kept mechanism.
+
+What does NOT exist yet: apps as records, weak-tie discovery, and any of the
+onboarding work.
 
 **Namespace note:** records use `is.mfd.poem1.*`, under a domain the hub owner
 controls. `tech.inanimate.*` would be the natural long-term home given Poem/1 and
@@ -128,6 +138,17 @@ is the main defence against cold start.
 - **Graph queries** come from `public.api.bsky.app` — `getRelationships` answers
   "are these two mutuals" directly; `getKnownFollowers` maps onto the weak-tie
   tier. Unauthenticated and free.
+
+### Cloudflare constraint (found 2026-07-23)
+
+A Worker fetching another Worker **on the same zone** fails with error 1042, so
+two hubs on one Cloudflare account cannot federate by default. Fixed with the
+`global_fetch_strictly_public` compatibility flag, which sends fetch out over the
+public internet rather than short-circuiting internally — which is what
+federation wants anyway. Hubs on separate accounts or custom domains never see
+this. Separately: **redeploying a Worker restarts its Durable Objects and drops
+device WebSockets**, so the first push after any deploy can report "Device not
+connected" until the device reconnects.
 
 ### The centralization we can't design away
 
