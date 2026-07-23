@@ -53,8 +53,10 @@ export const NS = {
   state: "oauth-state",
   /** Long-lived OAuth sessions, keyed by the account DID. */
   session: "oauth-session",
-  /** Hub-level facts: which DID owns this hub. */
+  /** Hub-level facts: owner DID, federation key, this hub's device. */
   hub: "hub",
+  /** Seen federation nonces, for replay rejection inside the skew window. */
+  nonce: "fed-nonce",
 } as const
 
 export function hubStore(env: Env): DurableObjectStub<HubStore> {

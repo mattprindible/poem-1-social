@@ -3,7 +3,13 @@
   "name": "poem1-hub",
   "main": "src/worker.ts",
   "compatibility_date": "2026-03-02",
-  "compatibility_flags": ["nodejs_compat"],
+  // global_fetch_strictly_public: without it, a Worker fetching another Worker
+  // on the same zone fails with Cloudflare error 1042. Federation is hub-to-hub
+  // HTTPS, so two hubs on one account cannot talk without this. It makes fetch
+  // go out to the public internet rather than being short-circuited internally,
+  // which is what we want anyway — a federated request should take exactly the
+  // path any other hub's request would.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   // send-app.sh --dev posts to http://localhost:5173, so pin `wrangler dev`
   // there rather than its 8787 default.
   "dev": {
