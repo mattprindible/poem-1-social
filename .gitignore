@@ -4,3 +4,7 @@ device/.pio/
 # Per-device: written by first-flash.sh from YOUR device's MAC. Not shipped, so
 # a fresh clone never carries someone else's device ID.
 .resident-device-id
+
+# Per-person: your own hub URL (see server/). Not shipped, so a fresh clone
+# falls back to the public relay rather than pushing to someone else's hub.
+.resident-hub-url

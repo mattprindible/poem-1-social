@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "poem1-hub",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-03-02",
+  "compatibility_flags": ["nodejs_compat"],
+  // send-app.sh --dev posts to http://localhost:5173, so pin `wrangler dev`
+  // there rather than its 8787 default.
+  "dev": {
+    "port": 5173
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "DeviceAgent",
+        "name": "DeviceAgent"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "new_sqlite_classes": ["DeviceAgent"],
+      "tag": "v1"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

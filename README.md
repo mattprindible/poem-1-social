@@ -73,8 +73,36 @@ cat my-app.lua | ./send-app.sh --device-id <id>
 Apps in [`device-apps/`](device-apps/): `minute-clock`, `battery-watch`,
 `hello-status`, `first-light`, `hw-survey`, `standby`.
 
-Pushes go to the public relay at `resident.inanimate.tech` by default; use
-`--base-url` to target a self-hosted worker.
+### Where pushes go
+
+A fresh clone pushes to the public relay at `resident.inanimate.tech`. That
+relay has **no authentication** — anyone who knows your device ID can push code
+to your Poem/1 — so this project runs its own hub instead.
+
+[`server/`](server/) is a Cloudflare Worker (copied from Resident's
+`server-template`) that speaks the same protocol. Deploy your own, then move the
+device to it **over the air — no reflashing**:
+
+```sh
+cd server && npm install && npx wrangler deploy   # -> poem1-hub.<account>.workers.dev
+cd ..
+./set-hub.sh poem1-hub.<account>.workers.dev      # device switches live
+./set-hub.sh --clear                              # back to the public relay
+```
+
+Which hub a device talks to is **runtime config**, stored in NVS — so one
+firmware binary works for everybody, and moving hubs is a message rather than a
+build. `set-hub.sh` also writes `.resident-hub-url` (gitignored) on success, so
+`send-app.sh` follows the device to its new home; `--base-url URL` or `--dev`
+still override per-push.
+
+Once the device is on your hub it is **not** reachable on the public relay any
+more. If it ever can't reach a stored hub, it falls back to the public relay for
+the rest of that boot — keeping NVS intact and leaving you a way in — so a typo'd
+hostname costs a reboot, never a reflash.
+
+Why this matters, and where it's going:
+[`docs/social-plan.md`](docs/social-plan.md).
 
 ## Staying in sync with Resident
 

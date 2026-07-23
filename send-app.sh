@@ -6,12 +6,18 @@
 #   ./send-app.sh --device-id <id> device-apps/hello.lua
 #   cat device-apps/hello.lua | ./send-app.sh --device-id <id>
 #
-# Defaults to the public relay at https://resident.inanimate.tech.
-# Pass --base-url to target a self-hosted Worker (e.g. http://localhost:5173
-# while running `npm run dev` from server/).
+# Target, in order of precedence:
+#   --base-url URL / --dev      explicit flag
+#   $RESIDENT_BASE_URL          env var
+#   ./.resident-hub-url         your own hub (gitignored — see server/)
+#   https://resident.inanimate.tech   the public relay, as a last resort
 #
-# The device ID can also come from the RESIDENT_DEVICE_ID env var or a
-# .resident-device-id file in cwd, so you don't have to repeat the flag.
+# Once the firmware points at your own hub (device/src/main.cpp), the device is
+# NOT reachable on the public relay any more, so write your hub's URL into
+# .resident-hub-url and the plain `./send-app.sh app.lua` form keeps working.
+#
+# The device ID resolves the same way: --device-id, then $RESIDENT_DEVICE_ID,
+# then .resident-device-id in cwd.
 #
 # Requires: curl, jq.
 
@@ -20,7 +26,7 @@ set -euo pipefail
 PROD_URL="https://resident.inanimate.tech"
 DEV_URL="http://localhost:5173"
 
-base_url="$PROD_URL"
+base_url=""
 device_id="${RESIDENT_DEVICE_ID:-}"
 app_file=""
 
@@ -30,7 +36,7 @@ Usage: $0 [--base-url URL | --dev] [--device-id ID] [APP_FILE]
        cat app.lua | $0 [...flags]
 
 Defaults:
-  --base-url   $PROD_URL
+  --base-url   \$RESIDENT_BASE_URL, then ./.resident-hub-url, then $PROD_URL
   --device-id  \$RESIDENT_DEVICE_ID, then ./.resident-device-id, then required
 
 Flags:
@@ -56,6 +62,18 @@ done
 if [[ -z "$device_id" && -f .resident-device-id ]]; then
   device_id=$(tr -d '[:space:]' < .resident-device-id)
 fi
+
+# Resolve the target after flag parsing, so an explicit --base-url/--dev wins.
+if [[ -z "$base_url" ]]; then
+  base_url="${RESIDENT_BASE_URL:-}"
+fi
+if [[ -z "$base_url" && -f .resident-hub-url ]]; then
+  base_url=$(tr -d '[:space:]' < .resident-hub-url)
+fi
+if [[ -z "$base_url" ]]; then
+  base_url="$PROD_URL"
+fi
+base_url="${base_url%/}"  # tolerate a trailing slash
 
 if [[ -z "$device_id" ]]; then
   echo "send-app: error: device ID required." >&2
