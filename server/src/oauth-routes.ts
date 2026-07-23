@@ -1,6 +1,7 @@
 import { NS, hubStore } from "./hub-store"
 import { IdentityError, resolveIdentity } from "./identity"
 import { createOAuthClient } from "./oauth-client"
+import { publishHubRecord } from "./hub-record"
 import { KeyError } from "./oauth"
 
 // The hub's login flow. One hub, one owner: the first account to complete a
@@ -33,7 +34,7 @@ const json = (body: unknown, status = 200) =>
     headers: { "Content-Type": "application/json; charset=utf-8" },
   })
 
-async function getOwner(env: Env): Promise<string | undefined> {
+export async function getOwner(env: Env): Promise<string | undefined> {
   return hubStore(env).getItem(NS.hub, "owner")
 }
 
@@ -46,7 +47,7 @@ async function getOwner(env: Env): Promise<string | undefined> {
  * says nothing at all, which cost a debugging round trip through a login flow
  * that can only be exercised by a human at a browser. So report the chain.
  */
-function describeError(err: unknown, depth = 0): unknown {
+export function describeError(err: unknown, depth = 0): unknown {
   if (depth > 5 || err == null) return String(err)
   if (!(err instanceof Error)) return String(err)
   const out: Record<string, unknown> = { name: err.name, message: err.message }
@@ -125,9 +126,26 @@ export async function routeOAuthRequest(request: Request, env: Env): Promise<Res
       }
       if (!owner) await store.setItem(NS.hub, "owner", did)
 
+      // Publish the hub record straight away: signing in is exactly the moment
+      // the hub becomes able to say who it is, so there is no reason to make
+      // that a second manual step. Deliberately non-fatal — a failure here
+      // should not cost the user a session they just successfully established.
+      let published: string
+      try {
+        const { uri } = await publishHubRecord(env, session, origin)
+        published = `<p>Published <code>${uri}</code> — other hubs can now find and verify this one.</p>`
+      } catch (err) {
+        published =
+          `<p class="err">Signed in, but publishing the hub record failed: ` +
+          `<code>${err instanceof Error ? err.message : String(err)}</code></p>` +
+          `<p>Retry with <code>POST /hub/publish</code>.</p>`
+      }
+
       return html(
         `<h1>Signed in</h1><p>This hub is authorized as <code>${did}</code>.</p>
-         <p>Details: <a href="/oauth/session">/oauth/session</a></p>`,
+         ${published}
+         <p>Details: <a href="/oauth/session">/oauth/session</a> ·
+            <a href="/hub/record">/hub/record</a></p>`,
       )
     }
 
