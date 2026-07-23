@@ -73,8 +73,29 @@ cat my-app.lua | ./send-app.sh --device-id <id>
 Apps in [`device-apps/`](device-apps/): `minute-clock`, `battery-watch`,
 `hello-status`, `first-light`, `hw-survey`, `standby`.
 
-Pushes go to the public relay at `resident.inanimate.tech` by default; use
-`--base-url` to target a self-hosted worker.
+### Where pushes go
+
+A fresh clone pushes to the public relay at `resident.inanimate.tech`. That
+relay has **no authentication** — anyone who knows your device ID can push code
+to your Poem/1 — so this project runs its own hub instead.
+
+[`server/`](server/) is a Cloudflare Worker (copied from Resident's
+`server-template`) that speaks the same protocol. Deploy your own and point the
+firmware at it:
+
+```sh
+cd server && npm install && npx wrangler deploy
+# then set RESIDENT_HOST in device/src/main.cpp to your worker's hostname,
+# and reflash (see Staying in sync, below)
+```
+
+Write your hub's URL into `.resident-hub-url` (gitignored) and `send-app.sh`
+targets it automatically; `--base-url URL` or `--dev` still override per-push.
+Once the firmware points at your hub, the device is **not** reachable on the
+public relay any more.
+
+Why this matters, and where it's going:
+[`docs/social-plan.md`](docs/social-plan.md).
 
 ## Staying in sync with Resident
 
