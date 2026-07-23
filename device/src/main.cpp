@@ -50,6 +50,54 @@ Resident::SandboxConfig makeConfig() {
 
 Resident::Sandbox sandbox{makeConfig()};
 
+// ── Runtime escape hatch ─────────────────────────────────────────────────
+// Hold the button while an app is running to stop it AND forget it, so a bad
+// app can't hold the device hostage. Matters once apps can arrive from other
+// people rather than only from you — see docs/social-plan.md.
+//
+// Resident exposes sandbox.onSystemButtonHold(), but its threshold is a fixed
+// 500ms, which is too short here: this same button is also the app-facing Lua
+// `button` module, so any app using a half-second press would kill itself. So
+// we time the hold ourselves off the same primitive the runtime uses —
+// ButtonDriver::pressed(), a debounced *level* read polled from the main loop.
+// That never passes through Lua's event dispatch, so an app cannot swallow the
+// gesture by consuming button events. (Making the runtime's threshold
+// configurable is a good upstream contribution; then this collapses to the
+// stock hook.)
+//
+// Inert during the boot countdown, where no app is loaded yet and the runtime
+// owns the button for its own tap/long-press gestures.
+//
+// NOT a defence against an app that wedges the Lua VM in a tight loop — the
+// main loop never runs then. Power-cycling is the backstop, and the
+// clearPersistedApp() below is what stops the bad app coming straight back.
+static constexpr uint32_t ESCAPE_HOLD_MS = 3000;
+
+static void updateEscapeHatch() {
+    static uint32_t downSince = 0;
+    static bool fired = false;
+
+    if (!buttonDriver.pressed()) {
+        downSince = 0;
+        fired = false;
+        return;
+    }
+    if (downSince == 0) {
+        downSince = millis();  // press started
+        return;
+    }
+    if (fired || millis() - downSince < ESCAPE_HOLD_MS) return;
+
+    fired = true;  // one shot per press, whether or not there's an app to stop
+    if (!sandbox.isAppRunning()) return;
+
+    Serial.println("[escape] button held — stopping and forgetting the app");
+    sandbox.suspendApp();         // halt on_tick + event dispatch
+    sandbox.clearPersistedApp();  // ...and don't restore it on the next boot
+    // suspendApp() frees the status display, so this now reaches the panel.
+    screenDriver.displayText("App stopped\n\nHeld the button.\nPush a new app to continue.");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(2000);  // wait for USB CDC
@@ -83,4 +131,5 @@ void setup() {
 
 void loop() {
     sandbox.loop();
+    updateEscapeHatch();
 }
