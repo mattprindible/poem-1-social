@@ -1,6 +1,8 @@
 # Poem/1 Social — design plan
 
-**Status:** design agreed 2026-07-22, not yet implemented.
+**Status:** design agreed 2026-07-22. Phase 0 built and hardware-verified the
+same day — the device-side escape hatch, a self-hosted hub (`server/`, deployed),
+and runtime hub configuration. Nothing social exists yet; identity is next.
 Supersedes the earlier "self-hosted Worker" napkin sketch (auth + error feedback),
 which was two chores bundled together rather than a design.
 
@@ -172,6 +174,19 @@ at once. Cache aggressively; treat the graph as advisory state, not live truth.
    entry cliff. Because identity is a DID and the endpoint is a record they
    control, self-hosting later is a record update, not a migration — so a hub is
    not lock-in. Worth doing if onboarding proves to be the bottleneck.
+   *Cheaper now than it was:* the hub hostname is runtime config (NVS), so
+   pointing at a hub — or leaving one — is `./set-hub.sh`, not a rebuild. One
+   firmware binary serves everybody, which removes a per-person build from the
+   onboarding path.
+
+5. **Devices still can't talk back.** `DeviceAgent.onMessage` is a no-op, so
+   nothing the device emits reaches the hub. This bites already: `set-hub.sh` can
+   only confirm a hub switch by watching the destination's connection count rise,
+   which is best-effort — Durable Objects keep hibernating WebSockets from old
+   boots, so a hub the device left hours ago still reports connections, and a
+   naive non-zero check produced a confident false positive during testing.
+   Overriding `onMessage` is the fix, and it is also the compile/runtime error
+   feedback channel. Probably the first thing to build on the hub after identity.
 
 ## The real bottleneck
 
