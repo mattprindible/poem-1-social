@@ -168,6 +168,25 @@ Social trust sets **policy** (who may push); it never changes **mechanism** (wha
 pushed code can do). The Lua sandbox, driver allowlists and e-ink flip limits are
 untouched — and the 3-second button hold stops anything, whoever sent it.
 
+### Testing it
+
+This path needs two identities, two hubs, a live mutual follow and a physical
+device, so it is the most important thing here and the most expensive to check.
+[`test-federation.sh`](test-federation.sh) runs the whole chain — credential,
+discovery, signing, verification, mutual check, delivery — and asserts on the
+*device's* answer rather than the relay's:
+
+```sh
+./test-federation.sh                      # push federated-hello.lua
+./test-federation.sh --force              # let the RECIPIENT's check be the test
+```
+
+It reads the sender's owner token from `$HUB_ADMIN_TOKEN` or the macOS keychain.
+Cloudflare secrets are write-only, so record the token once when you set it
+rather than rotating it every time you want to run this — the script's header has
+the exact commands. You do **not** need an OAuth browser session for this; that
+is only for claiming a hub and publishing its record.
+
 Routes, deployment and the trust model in detail: [`server/README.md`](server/README.md).
 Why it is built this way: [`docs/social-plan.md`](docs/social-plan.md).
 

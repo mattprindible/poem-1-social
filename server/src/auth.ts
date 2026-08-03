@@ -1,4 +1,4 @@
-import { NS, hubStore } from "./hub-store"
+import { NS, OWNER_ITEM, hubStore } from "./hub-store"
 
 // Owner authentication for the hub's own control surface.
 //
@@ -114,7 +114,30 @@ function bearerMatches(env: Env, request: Request): boolean {
  */
 export async function requireOwner(env: Env, request: Request): Promise<void> {
   if (bearerMatches(env, request)) return
-  if (await didFromCookie(env, request)) return
+
+  const sessionDid = await didFromCookie(env, request)
+  if (sessionDid) {
+    // A session cookie proves "this browser once signed in as that DID". It
+    // does NOT prove "that DID still owns this hub", and the two come apart
+    // exactly when it matters most: ownership can be released (POST
+    // /oauth/logout) and the hub re-claimed by someone else, while sessions
+    // issued to the previous owner stay valid for their full 30 days.
+    //
+    // Logout clears the session it was called with, so the obvious path
+    // self-heals — but only that ONE browser. Any other session the previous
+    // owner still holds would otherwise keep full control of a hub they no
+    // longer own, including the device it relays to. Re-reading the owner on
+    // every request is what makes an ownership change revoke sessions.
+    const owner = await hubStore(env).getItem(NS.hub, OWNER_ITEM)
+    if (owner && sessionDid === owner) return
+    throw new AuthError(
+      owner
+        ? "this session belongs to an account that no longer owns this hub — sign in again"
+        : "this hub is unclaimed; the session that created it is no longer valid",
+      403,
+    )
+  }
+
   throw new AuthError(
     "owner authentication required — sign in at /oauth/login, or send " +
       "Authorization: Bearer <HUB_ADMIN_TOKEN>",

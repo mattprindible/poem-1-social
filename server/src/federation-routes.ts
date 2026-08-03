@@ -48,18 +48,28 @@ async function getDeviceId(env: Env): Promise<string | undefined> {
  * `channel:"system"` puts the message on Resident's control plane (0.7.0+),
  * where "app" is a reserved type handled by the runtime itself. Un-channelled
  * messages still work but log a deprecation on the device for every push.
+ *
+ * Takes the CODE, not the peer's message object, and builds the device envelope
+ * field by field. It used to spread the inbound body over the envelope
+ * (`{channel: "system", ...message}`) — but a spread comes last and therefore
+ * WINS, so any peer could override the channel simply by including one, and any
+ * extra field they invented rode along to the device. That quietly inverted this
+ * function's whole purpose: the boundary that exists to stop Resident's
+ * protocol leaking into federation was itself letting peers steer it. Nothing a
+ * mutual sends is a credential for anything beyond "here is some Lua", so only
+ * the Lua crosses.
  */
-async function deliverToDevice(
+async function deliverAppToDevice(
   env: Env,
   deviceId: string,
-  message: Record<string, unknown>,
+  code: string,
 ): Promise<Response> {
   const agent = await getAgentByName(env.DeviceAgent, deviceId)
   return agent.fetch(
     new Request(`https://hub/devices/${deviceId}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel: "system", ...message }),
+      body: JSON.stringify({ channel: "system", type: "app", code }),
     }),
   )
 }
@@ -148,7 +158,7 @@ export async function routeFederationRequest(
       // reserved types, its deprecation schedule) must NOT leak into it — peers
       // run hubs we cannot update, so anything added here we are committing to
       // supporting forever. Translation to whatever the recipient's device
-      // currently speaks happens at the boundary, in deliverToDevice().
+      // currently speaks happens at the boundary, in deliverAppToDevice().
       const payload = JSON.stringify({ type: "app", code: body.code })
       const headers = await signOutbound(env, {
         sender: owner,
@@ -207,7 +217,7 @@ export async function routeFederationRequest(
         return json({ error: "bad_request", message: "expected { type: 'app', code }" }, 400)
       }
 
-      const res = await deliverToDevice(env, deviceId, message)
+      const res = await deliverAppToDevice(env, deviceId, message.code)
       const detail = await res.text()
       return json(
         {

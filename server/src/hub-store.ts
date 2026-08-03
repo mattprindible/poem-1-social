@@ -61,6 +61,16 @@ export const NS = {
   ui: "ui-session",
 } as const
 
+/**
+ * Key of the owner DID within `NS.hub`.
+ *
+ * Shared rather than spelled inline, because two very different modules now
+ * depend on reading the same value — oauth-routes decides who may claim the
+ * hub, auth decides whether a live session still belongs to whoever owns it.
+ * A typo in either silently grants or denies control of the whole hub.
+ */
+export const OWNER_ITEM = "owner"
+
 export function hubStore(env: Env): DurableObjectStub<HubStore> {
   return env.HubStore.get(env.HubStore.idFromName(HUB_SINGLETON))
 }
