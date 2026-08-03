@@ -57,8 +57,8 @@ Resident::SandboxConfig makeConfig() {
     cfg.deviceType    = "poem1";
     cfg.extensions    = {&screenDriver, &buttonDriver, &i2cDriver,
                          &gpioDriver, &adcDriver, &ledDriver};
-    cfg.statusDisplay = &screenDriver;
-    cfg.statusLED     = &ledDriver;      // hidden green LED shows connection state
+    cfg.systemDisplay = &screenDriver;
+    cfg.systemLED     = &ledDriver;      // hidden green LED shows connection state
     cfg.systemButton  = &buttonDriver;   // boot countdown: tap=load now, hold=forget
     // NB: don't set cfg.timezone — configure() runs in the global ctor,
     // pre-WiFi, so ezTime's network lookup always fails into UTC. The zone
@@ -239,6 +239,15 @@ void setup() {
     // The runtime's idle screen shows device ID + type (and the restore
     // countdown when an app is persisted); no bootstrap app needed anymore.
     sandbox.setIdleScreenTitle("Poem/1 Resident");
+
+    // Resident 0.7.0 shows an app's `description` field on systemDisplay the
+    // moment a load message arrives. On a device with a separate status screen
+    // that's free; here systemDisplay IS the e-ink the app draws to, so it
+    // would cost an unrequested full refresh (~2-4s of waveform, plus panel
+    // wear) on every push that happens to carry a description. Nothing we send
+    // sets one today — but a social layer captioning its pushes is the obvious
+    // next step, so decline up front rather than discover it on the panel.
+    sandbox.setShowDescriptions(false);
     g_hubAttemptStartedMs = millis();  // start the fallback clock at first connect attempt
     sandbox.setup();
 }
