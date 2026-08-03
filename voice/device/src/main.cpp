@@ -1,10 +1,10 @@
 #include <M5Unified.h>
 #include <Resident.h>
+#include <ResidentM5Mic.h>   // opt-in M5 mic driver shipped with Resident 0.7.0
 #include "DisplayDriver.h"
 #include "IMUDriver.h"
 #include "BuzzerDriver.h"
 #include "PushButtonsDriver.h"
-#include "M5MicDriver.h"
 
 // ---------------------------------------------------------------------------
 // m5stick-voice — push-to-talk audio streaming, built on Resident core.
@@ -28,7 +28,13 @@ static constexpr PushButtonsConfig buttonConfig = {.numButtons = 2, .pins = BUTT
 IMUDriver imuDriver;
 BuzzerDriver buzzerDriver{255};
 PushButtonsDriver buttonDriver{buttonConfig};
-M5MicDriver micDriver;
+// Was a hand-rolled M5MicDriver vendored from upstream's example. Resident
+// 0.7.0 ships that driver properly (three-buffer rotation, mic task pinned to
+// core 1 @ prio 18), and deleted the example's copy — which returned buffers
+// the async M5.Mic.record() had not filled yet, and let the mic task go on
+// writing the caller's buffer after read() returned. Capture now runs only
+// while the pump streams, so the mic no longer holds I2S at idle.
+Resident::M5Mic micDriver;
 
 // Forward declarations so VoiceDisplay::restoreContent() can reach the
 // idle prompt and the sandbox's run state; both are defined further down.
@@ -103,9 +109,37 @@ void setup() {
 
     // Push-to-talk: hold the front button → overlay + stream; release → stop.
     sandbox.onSystemButtonHold([](bool held) {
-        sandbox.requestOverlay(&listening, held);
-        if (held) sandbox.startMicStream();
-        else      sandbox.stopMicStream();
+        if (!held) {
+            sandbox.stopMicStream();          // also end()s the mic, freeing I2S
+            sandbox.requestOverlay(&listening, false);
+            // M5Mic's pipeline-health counters (0.7.0). In a healthy stream
+            // underruns/tornSlots/timeouts all read 0; a few underruns right
+            // at start are normal while the queue primes. tornSlots > 0 is the
+            // serious one — it means a slot was served before the mic task
+            // filled it, the exact defect the old vendored driver had.
+            const auto& a = micDriver.audit();
+            Serial.printf("[voice] stream stopped — reads=%u underruns=%u "
+                          "tornSlots=%u timeouts=%u maxWait=%ums maxGap=%ums\n",
+                          a.reads, a.underruns, a.tornSlots, a.timeouts,
+                          a.maxWaitMs, a.maxReadGapMs);
+            return;
+        }
+        // startMicStream() gained a bool return in 0.7.0: the pump acquires the
+        // capture hardware at stream start rather than at setup(), so starting
+        // can now genuinely fail. Only raise the "listening" overlay if it
+        // actually started — otherwise the screen invites you to talk into a
+        // stream that was never opened.
+        micDriver.resetAudit();               // counters are per-utterance
+        if (sandbox.startMicStream()) {
+            sandbox.requestOverlay(&listening, true);
+            // Log the success path too, not just the failure. A silent success
+            // is indistinguishable from the hold callback never firing at all,
+            // which makes the serial log useless for telling those apart.
+            Serial.printf("[voice] streaming @%uHz, %d-sample frames\n",
+                          micDriver.sampleRate(), micDriver.frameSamples());
+        } else {
+            Serial.println("[voice] mic failed to start — not streaming");
+        }
     });
 
     sandbox.setup();
