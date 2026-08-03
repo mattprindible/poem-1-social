@@ -216,12 +216,25 @@ void setup() {
         sandbox.ws().setEndpoint(g_activeHost, RESIDENT_PORT, wsPath.c_str());
     });
 
-    // Resident routes app/shader/app_event/forget itself; everything else
-    // lands here.
-    sandbox.onMessage([](const char* /*transport*/, const char* type,
-                         JsonDocument& doc) {
+    // Control-plane messages Resident doesn't handle itself (it routes the
+    // reserved app/shader/forget types internally) land here.
+    //
+    // Registered on BOTH paths deliberately. Since 0.7.0 a message stamped
+    // channel:"system" reaches the "system" slot, while one with no channel
+    // field takes the legacy onMessage path — and the two never overlap, so a
+    // device registering only the new slot goes deaf to every sender that
+    // hasn't been updated yet (an older hub, or a peer's hub we don't
+    // control). Making the RECEIVER tolerant of both first, and stamping
+    // senders afterwards, is what lets the two sides be rolled out
+    // independently — which matters here because the device is reflashed over
+    // USB while the hubs deploy separately. The legacy registration can be
+    // dropped once every sender is known to stamp.
+    auto handleControl = [](const char* /*transport*/, const char* type,
+                            JsonDocument& doc) {
         if (strcmp(type, "set_hub") == 0) handleSetHub(doc);
-    });
+    };
+    sandbox.onMessageWithChannel("system", handleControl);  // channel:"system"
+    sandbox.onMessage(handleControl);                       // legacy, un-channelled
 
     sandbox.onConnected([]() {
         g_everConnected = true;
