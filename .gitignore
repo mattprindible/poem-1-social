@@ -2,13 +2,25 @@
 .pio/
 .DS_Store
 
-# Per-device: written by first-flash.sh from YOUR device's MAC. Not shipped, so
-# a fresh clone never carries someone else's device ID.
+# Wrangler's account cache. server/ ignores its own, but running wrangler from
+# the repo root (which it refuses to do usefully anyway) drops one here too, and
+# it contains the Cloudflare account id.
+.wrangler/
+
+# Per-device: YOUR device's ID, as shown on its idle screen. Not shipped, so a
+# fresh clone never carries someone else's device ID. (Previously described as
+# written by a first-flash.sh; no such script exists in this repo — the guided
+# first-time install is still unbuilt, as the README says.)
 .resident-device-id
 
 # Per-person: your own hub URL (see server/). Not shipped, so a fresh clone
 # falls back to the public relay rather than pushing to someone else's hub.
 .resident-hub-url
+
+# Per-device: the MAC sync.sh --flash requires the pinned upload_port to match
+# before it will flash. Overrides the default in sync.sh, so your board is not
+# whichever one this repo happened to be developed against.
+.poem1-mac
 
 # Voice worker local secrets (OPENAI_API_KEY lives in Cloudflare secrets)
 voice/server/.dev.vars
