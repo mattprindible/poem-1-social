@@ -1,3 +1,10 @@
+<!--
+UPSTREAM'S README, kept verbatim as a reference record of what this was copied
+from. Do not update it to describe this repo — that is what voice/server/README.md
+is for. Known consequences of keeping it verbatim: the viewer.png it references
+was not copied, and its paths are upstream's (examples/m5stick-voice/…).
+-->
+
 # M5Stick Voice (push-to-talk)
 
 A push-to-talk audio example for the M5StickC Plus2 / M5StickS3, built on the

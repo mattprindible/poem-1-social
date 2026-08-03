@@ -35,8 +35,18 @@ browser an owner session.
 Optional, for CLI and automation:
 
 ```sh
-npx wrangler secret put HUB_ADMIN_TOKEN     # any long random string
+TOKEN="$(openssl rand -hex 32)"
+security add-generic-password -a <worker-name> -s poem1-hub-admin -w "$TOKEN"  # macOS
+printf '%s' "$TOKEN" | npx wrangler secret put HUB_ADMIN_TOKEN
 ```
+
+> [!IMPORTANT]
+> Cloudflare secrets are **write-only**. `wrangler secret list` will tell you
+> `HUB_ADMIN_TOKEN` exists but never what it is, and `wrangler secret put` hides
+> its input — so a token you did not record is gone, and the only fix is
+> replacing it. Record it once, as above, rather than rotating it every time you
+> need it. `test-federation.sh` reads tokens from that keychain service by worker
+> name.
 
 ## Routes
 
@@ -82,12 +92,35 @@ npx wrangler secret put HUB_ADMIN_TOKEN     # any long random string
 | `GET \| POST /hub/device` 🔒 | which device this hub relays to |
 
 🔒 = owner only. Send `Authorization: Bearer $HUB_ADMIN_TOKEN`, or use the browser
-session cookie from `/oauth/login`.
+session cookie from `/oauth/login`. A session is checked against the **current**
+owner on every request, so releasing the hub revokes sessions rather than leaving
+a previous owner in control for the cookie's remaining lifetime.
 
 `/federation/inbox` is deliberately **not** owner-gated: it is authenticated by
 the sender's signature, and gating it would make federation impossible. That
 distinction — *hub-to-hub* auth versus *owner* auth — is the one to keep straight
 when adding routes.
+
+`POST /federation/push` takes `{to, code}` plus an optional `force`, which skips
+**this** hub's advisory mutual check. It cannot grant access — the recipient
+enforces independently — so it exists to make that independence observable
+instead of masked by the local check.
+
+## Testing it
+
+```sh
+cd .. && ./test-federation.sh          # every configured case
+./test-federation.sh --list            # what each case needs
+./test-federation.sh -v                # full JSON per case
+```
+
+The positive case proves the machinery runs; the negative cases prove it says
+no, which is the entire security claim. A hub that accepted everything would pass
+the positive test perfectly. The load-bearing case is `recipient-enforces`: it
+pushes from a non-mutual with `force`, so only the recipient's own answer
+remains, and it asserts the refusal **names the relationship** — HTTP 403 alone
+would also be produced by a signature failure, which would report the graph check
+holding while it was never reached.
 
 ## How trust works
 

@@ -37,10 +37,21 @@ device ──/devices/<id>──►  binary audio ──► resample 16k→24k �
 ### 1. Install + deploy
 
 ```bash
-cd examples/m5stick-voice/server
+cd voice/server           # upstream calls this examples/m5stick-voice/server
 npm install
-npx wrangler deploy        # note the worker host it prints, e.g. m5stick-voice.<acct>.workers.dev
+npx wrangler deploy       # worker name comes from wrangler.jsonc — here, poem1-voice
 ```
+
+The device prints its own viewer URL on the `[voice]` line at boot, so read it
+off serial rather than assembling it by hand:
+
+```
+[voice] device id 4853da1d — viewer: https://poem1-voice.<account>.workers.dev/devices/4853da1d/
+```
+
+`SERVER_HOST` in [`../device/src/main.cpp`](../device/src/main.cpp) must match
+the deployed worker; it is compile-time here, unlike the Poem/1's hub, which is
+runtime config in NVS.
 
 ### 2. Provide the OpenAI key
 
@@ -116,8 +127,14 @@ transcript fills in above. (You can drop the trailing slash —
 - The relay is unauthenticated beyond the device id (same caveat as
   [`../../m5stick-demo`](../../m5stick-demo)) — fine for hacking, not for
   production.
-- No `OPENAI_API_KEY` set? Audio still reaches the browser so the FFT animates;
-  the transcript stays empty and the worker logs the missing key.
+- **No usable `OPENAI_API_KEY`? Audio still reaches the browser, so the FFT
+  animates and the transcript stays empty.** This holds whether the key is unset
+  *or* set-but-revoked/out-of-credit: `onMessage` fans binary frames out to
+  monitors **before** calling `appendAudio`, which swallows the failure. It makes
+  the audio path free to test — verified on hardware 2026-08-03 with a revoked
+  key. Expect a trickle of upgrade errors in `wrangler tail`; there is a 2s
+  backoff (`openaiNextAttempt`) because ~32 frames/sec would otherwise each log
+  one. The background never repaints either, since `apply_css` is a model tool.
 - The session model is `gpt-realtime-2` (a constant `REALTIME_MODEL` in
   `worker.ts`) — swap it in one line. A conversational session with input
   transcription costs more than transcription-only.

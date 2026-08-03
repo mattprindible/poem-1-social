@@ -25,9 +25,14 @@ The Poem/1's three quirks are expressed in Resident's own terms
 
 | Poem/1 hardware            | Resident role   | Driver              |
 |----------------------------|-----------------|---------------------|
-| ED047TC1 4.7" e-ink (M5GFX)| `statusDisplay` | `EpdScreenDriver`   |
-| Hidden green LED (GPIO0)   | `statusLED`     | `PoemLedDriver`     |
+| ED047TC1 4.7" e-ink (M5GFX)| `systemDisplay` | `EpdScreenDriver`   |
+| Hidden green LED (GPIO0)   | `systemLED`     | `PoemLedDriver`     |
 | Button (GPIO2)             | `systemButton`  | `ButtonDriver`      |
+
+> [!NOTE]
+> `systemDisplay` / `systemLED` were `statusDisplay` / `statusLED` before
+> Resident 0.7.0. The old names still compile as deprecated aliases, so an older
+> example you copy from will work — but they are the ones going away.
 
 Plus `i2c` / `gpio` / `adc` probe modules for exploring the board from Lua.
 The Lua surface (screen/button/led/lifecycle) is documented in
@@ -77,9 +82,11 @@ cat my-app.lua | ./send-app.sh --device-id <id>
 ```
 
 Apps in [`device-apps/`](device-apps/): `minute-clock`, `battery-watch`,
-`hello-status`, `first-light`, `hw-survey`, `standby`, plus two test fixtures —
-`runaway` (misbehaves deliberately, to exercise the escape hatch) and
-`federated-hello` (renders who pushed it, for federation tests).
+`hello-status`, `first-light`, `hw-survey`, `nightfall` (a still night scene,
+drawn once and left alone — the calmest thing to leave on the panel), `standby`,
+plus two test fixtures — `runaway` (misbehaves deliberately, to exercise the
+escape hatch) and `federated-hello` (renders who pushed it, used by
+[`test-federation.sh`](test-federation.sh)).
 
 > [!TIP]
 > **Hold the button for ~3 seconds to stop whatever is running** and forget it,
@@ -199,19 +206,33 @@ PlatformIO caches it after the first build, so use the helper:
 
 ```sh
 ./sync.sh                  # fetch latest Resident + rebuild
-./sync.sh --flash          # + safely reflash over USB (quiesces the panel first)
-./sync.sh --flash --force  # + skip the safety abort if the device is unreachable
+./sync.sh --flash          # + safely reflash over USB (two safety gates, below)
+./sync.sh --flash --force  # + skip the QUIESCE gate only
 ```
 
 That's the whole sync loop. Because this project never modifies Resident, there
 are no merge conflicts — new Resident features just show up on the next `sync.sh`.
 
-`--flash` protects the e-ink panel automatically: before esptool resets the
-board it pushes `standby.lua` and waits for that refresh to finish, so the reset
-can't land mid-refresh (which would damage the panel — see the warning above).
-If it can't reach the device to quiesce it, `--flash` **aborts** rather than
-flash blind; re-run with `--force` only when you can see the screen is already
-idle or in its screensaver.
+`--flash` has **two independent safety gates**, and `--force` relaxes only the
+second:
+
+1. **Which board.** The pinned `upload_port` is confirmed by MAC before esptool
+   runs. The Poem/1 and the M5StickS3 in [`voice/`](voice/) are both ESP32-S3s on
+   the built-in USB JTAG peripheral, so they share a VID:PID (`303A:1001`) and
+   differ only by MAC — and port numbers are assigned by the host, so a replug
+   can silently swap them. Never skippable: "I can see the screen is idle" is not
+   an answer to "is this the right device". Override the expected MAC with
+   `$POEM1_MAC` or a `.poem1-mac` file.
+2. **Which panel state.** `standby.lua` is pushed and allowed to settle, so the
+   reset cannot land mid-refresh (which would damage the panel — see the warning
+   above). If the device can't be reached to quiesce it, `--flash` **aborts**
+   rather than flash blind; `--force` overrides this one only, for when you can
+   see the screen is already idle or in its screensaver.
+
+> [!WARNING]
+> [`voice/device`](voice/device) has **neither** gate. It pins its own
+> `upload_port`, so verify with `pio device list` before flashing it — a stale
+> pin there is the one remaining way to reset the Poem/1 with no quiesce.
 
 ## Notes
 
@@ -220,8 +241,9 @@ idle or in its screensaver.
   unreachable, local time falls back to UTC.)
 - `device/partitions.csv` matches the stock Poem/1 layout, so a flash lands in
   an app slot and never clobbers NVS/SPIFFS.
-- `sync.sh --flash` (reflashing a device already on Resident) quiesces the panel
-  for you: it pushes `standby.lua`, waits for that refresh to finish, then
-  flashes — so the reset can't land mid-refresh. It aborts rather than flash
-  blind if it can't reach the device; `--force` overrides only when you can see
-  the screen is already idle.
+- `sync.sh --flash` (reflashing a device already on Resident) is the verified
+  path — see [Staying in sync](#staying-in-sync-with-resident) for its two
+  safety gates.
+- Hub admin tokens are **write-only** in Cloudflare: `wrangler secret list` shows
+  that `HUB_ADMIN_TOKEN` exists, never its value. Record it when you set it (the
+  macOS keychain works well) rather than rotating it every time you need it.

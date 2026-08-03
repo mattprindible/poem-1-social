@@ -124,9 +124,15 @@ and `time.*` are real local time.
 The last successfully-loaded app is saved on-device and **auto-restores after
 a 20-second countdown** on the idle screen at boot. During the countdown the
 physical button is the system button: **tap = load the saved app now,
-long-press = forget it**. Send `{"type":"forget"}` to clear the saved app
-remotely. Until an app loads, the hidden green LED shows connection status;
-after that `led.set()` owns it.
+long-press = forget it**. To clear the saved app remotely, send
+`{"channel": "system", "type": "forget"}`. Until an app loads, the hidden green
+LED shows connection status; after that `led.set()` owns it.
+
+> [!NOTE]
+> Since Resident 0.7.0 control messages carry a `channel` field. The
+> un-channelled form (`{"type": "forget"}`) still works, but the device logs a
+> deprecation line for every message that omits it. `send-app.sh` and
+> `set-hub.sh` stamp it for you.
 
 ## Examples
 

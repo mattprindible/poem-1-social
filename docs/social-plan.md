@@ -1,16 +1,27 @@
 # Poem/1 Social — design plan
 
 **Status:** design agreed 2026-07-22; **the core bet is proven as of
-2026-07-23.** Phase 0 (device escape hatch, self-hosted hub, runtime hub
-config), phase 1 (atproto identity: OAuth login, hub record published and
-discoverable) and federation (signed hub-to-hub push gated on mutual follows)
-are all built and verified against live infrastructure.
+2026-07-23, and its refusal half as of 2026-08-03.** Phase 0 (device escape
+hatch, self-hosted hub, runtime hub config), phase 1 (atproto identity: OAuth
+login, hub record published and discoverable) and federation (signed hub-to-hub
+push gated on mutual follows) are all built and verified against live
+infrastructure.
 
 A second account's hub pushed a Lua app to this device — two hubs, two accounts,
 one Poem/1, no shared secrets and no central service. The sender proved itself
 with a key published in its own repo; the recipient checked the real Bluesky
 graph for a mutual follow; and the physical hold-to-stop escape hatch stopped
 the foreign app afterwards. Social trust set policy, the owner kept mechanism.
+
+**Saying no is now proven too, which is the half that actually matters.** A
+third account — a genuine *follower* of the device owner, not followed back, with
+a valid signature and a hub record of its own — pushed with the sender-side
+courtesy check deliberately bypassed, and the recipient refused it on the graph
+alone (`following: false, followedBy: true`). A serial tap held open across the
+attempt recorded nothing; the panel never learned there had been a push. That
+asymmetric follow is the relationship a sloppy graph check gets wrong, because
+`followedBy: true` looks like a connection. [`test-federation.sh`](../test-federation.sh)
+runs the whole thing — push and refusals — as one command.
 
 What does NOT exist yet: apps as records, weak-tie discovery, and any of the
 onboarding work.
