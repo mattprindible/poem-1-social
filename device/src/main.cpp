@@ -57,8 +57,8 @@ Resident::SandboxConfig makeConfig() {
     cfg.deviceType    = "poem1";
     cfg.extensions    = {&screenDriver, &buttonDriver, &i2cDriver,
                          &gpioDriver, &adcDriver, &ledDriver};
-    cfg.statusDisplay = &screenDriver;
-    cfg.statusLED     = &ledDriver;      // hidden green LED shows connection state
+    cfg.systemDisplay = &screenDriver;
+    cfg.systemLED     = &ledDriver;      // hidden green LED shows connection state
     cfg.systemButton  = &buttonDriver;   // boot countdown: tap=load now, hold=forget
     // NB: don't set cfg.timezone — configure() runs in the global ctor,
     // pre-WiFi, so ezTime's network lookup always fails into UTC. The zone
@@ -216,12 +216,25 @@ void setup() {
         sandbox.ws().setEndpoint(g_activeHost, RESIDENT_PORT, wsPath.c_str());
     });
 
-    // Resident routes app/shader/app_event/forget itself; everything else
-    // lands here.
-    sandbox.onMessage([](const char* /*transport*/, const char* type,
-                         JsonDocument& doc) {
+    // Control-plane messages Resident doesn't handle itself (it routes the
+    // reserved app/shader/forget types internally) land here.
+    //
+    // Registered on BOTH paths deliberately. Since 0.7.0 a message stamped
+    // channel:"system" reaches the "system" slot, while one with no channel
+    // field takes the legacy onMessage path — and the two never overlap, so a
+    // device registering only the new slot goes deaf to every sender that
+    // hasn't been updated yet (an older hub, or a peer's hub we don't
+    // control). Making the RECEIVER tolerant of both first, and stamping
+    // senders afterwards, is what lets the two sides be rolled out
+    // independently — which matters here because the device is reflashed over
+    // USB while the hubs deploy separately. The legacy registration can be
+    // dropped once every sender is known to stamp.
+    auto handleControl = [](const char* /*transport*/, const char* type,
+                            JsonDocument& doc) {
         if (strcmp(type, "set_hub") == 0) handleSetHub(doc);
-    });
+    };
+    sandbox.onMessageWithChannel("system", handleControl);  // channel:"system"
+    sandbox.onMessage(handleControl);                       // legacy, un-channelled
 
     sandbox.onConnected([]() {
         g_everConnected = true;
@@ -239,6 +252,15 @@ void setup() {
     // The runtime's idle screen shows device ID + type (and the restore
     // countdown when an app is persisted); no bootstrap app needed anymore.
     sandbox.setIdleScreenTitle("Poem/1 Resident");
+
+    // Resident 0.7.0 shows an app's `description` field on systemDisplay the
+    // moment a load message arrives. On a device with a separate status screen
+    // that's free; here systemDisplay IS the e-ink the app draws to, so it
+    // would cost an unrequested full refresh (~2-4s of waveform, plus panel
+    // wear) on every push that happens to carry a description. Nothing we send
+    // sets one today — but a social layer captioning its pushes is the obvious
+    // next step, so decline up front rather than discover it on the panel.
+    sandbox.setShowDescriptions(false);
     g_hubAttemptStartedMs = millis();  // start the fallback clock at first connect attempt
     sandbox.setup();
 }

@@ -109,10 +109,14 @@ base_url="${base_url%/}"
 # Where it should END UP.
 if [[ "$do_clear" -eq 1 ]]; then
   target_host="$DEFAULT_HUB_HOST"
-  payload=$(jq -n '{type: "set_hub", host: ""}')
+  # channel:"system" — control plane (0.7.0+). Unlike "app", set_hub is NOT a
+  # reserved type, so it reaches the device via the "system" channel slot that
+  # device/src/main.cpp registers. A device flashed before that registration
+  # existed will DROP this; it still accepts the un-channelled form.
+  payload=$(jq -n '{channel: "system", type: "set_hub", host: ""}')
 else
   target_host="$new_host"
-  payload=$(jq -n --arg h "$new_host" '{type: "set_hub", host: $h}')
+  payload=$(jq -n --arg h "$new_host" '{channel: "system", type: "set_hub", host: $h}')
 fi
 target_url="https://${target_host}"
 

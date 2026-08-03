@@ -36,18 +36,30 @@ async function getDeviceId(env: Env): Promise<string | undefined> {
   return hubStore(env).getItem(NS.hub, DEVICE_ITEM)
 }
 
-/** Hand an app to a device via the same Durable Object the relay uses. */
+/**
+ * Hand an app to a device via the same Durable Object the relay uses.
+ *
+ * THE TRANSLATION BOUNDARY. Inbound federation bodies are in our own frozen
+ * wire format ({type, code}); devices speak Resident's protocol, which evolves
+ * on upstream's schedule. This is the one place the two meet, so a change to
+ * Resident's envelope is a change to this function and nothing else — in
+ * particular it never becomes a change our federation peers have to follow.
+ *
+ * `channel:"system"` puts the message on Resident's control plane (0.7.0+),
+ * where "app" is a reserved type handled by the runtime itself. Un-channelled
+ * messages still work but log a deprecation on the device for every push.
+ */
 async function deliverToDevice(
   env: Env,
   deviceId: string,
-  message: unknown,
+  message: Record<string, unknown>,
 ): Promise<Response> {
   const agent = await getAgentByName(env.DeviceAgent, deviceId)
   return agent.fetch(
     new Request(`https://hub/devices/${deviceId}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(message),
+      body: JSON.stringify({ channel: "system", ...message }),
     }),
   )
 }
@@ -131,6 +143,12 @@ export async function routeFederationRequest(
         )
       }
 
+      // The federation wire format is OURS and deliberately frozen: {type, code}.
+      // Resident's device-protocol concepts (the `channel` envelope field, its
+      // reserved types, its deprecation schedule) must NOT leak into it — peers
+      // run hubs we cannot update, so anything added here we are committing to
+      // supporting forever. Translation to whatever the recipient's device
+      // currently speaks happens at the boundary, in deliverToDevice().
       const payload = JSON.stringify({ type: "app", code: body.code })
       const headers = await signOutbound(env, {
         sender: owner,

@@ -111,7 +111,12 @@ if [[ -z "$code" ]]; then
   exit 2
 fi
 
-payload=$(jq -n --arg code "$code" '{type: "app", code: $code}')
+# channel:"system" puts this on Resident's control plane (0.7.0+). "app" is a
+# reserved type there and is handled by the runtime itself, exactly as it was on
+# the old un-channelled path — so this is safe against any 0.7.0 device whether
+# or not it registers a "system" slot. Without the stamp the device still loads
+# the app but logs a deprecation warning on every push.
+payload=$(jq -n --arg code "$code" '{channel: "system", type: "app", code: $code}')
 endpoint="${base_url}/devices/${device_id}/send"
 
 echo "Sending $app_label to $endpoint" >&2
