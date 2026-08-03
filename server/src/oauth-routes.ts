@@ -1,4 +1,4 @@
-import { NS, hubStore } from "./hub-store"
+import { NS, OWNER_ITEM, hubStore } from "./hub-store"
 import { IdentityError, resolveIdentity } from "./identity"
 import { createOAuthClient } from "./oauth-client"
 import { publishHubRecord } from "./hub-record"
@@ -36,7 +36,7 @@ const json = (body: unknown, status = 200) =>
   })
 
 export async function getOwner(env: Env): Promise<string | undefined> {
-  return hubStore(env).getItem(NS.hub, "owner")
+  return hubStore(env).getItem(NS.hub, OWNER_ITEM)
 }
 
 /**
@@ -125,7 +125,7 @@ export async function routeOAuthRequest(request: Request, env: Env): Promise<Res
         await client.revoke(did).catch(() => {})
         return html(`<h1 class="err">Not your hub</h1><p>This hub belongs to <code>${owner}</code>.</p>`, 403)
       }
-      if (!owner) await store.setItem(NS.hub, "owner", did)
+      if (!owner) await store.setItem(NS.hub, OWNER_ITEM, did)
 
       // Publish the hub record straight away: signing in is exactly the moment
       // the hub becomes able to say who it is, so there is no reason to make
