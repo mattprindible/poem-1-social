@@ -273,12 +273,21 @@ if wanted recipient-enforces; then
     code=$(push "$STRANGER_HUB" "$tok" "$OWNER_HANDLE" 1)
     status=$(jq -r '.status // 0' < "$BODY")
     delivered=$(jq -r '.response.delivered // false' < "$BODY")
+    reason=$(jq -r '.response.message // ""' < "$BODY")
     if [[ "$delivered" == "true" ]]; then
       report FAIL recipient-enforces "A NON-MUTUAL REACHED THE DEVICE — trust model broken"
-    elif [[ "$status" == "403" ]]; then
-      report PASS recipient-enforces "recipient refused a non-mutual (403), sender bypassed"
-    else
+    elif [[ "$status" != "403" ]]; then
       report FAIL recipient-enforces "expected recipient 403, got status=$status code=$code"
+    elif [[ "$reason" != *"not a mutual"* ]]; then
+      # 403 alone is NOT enough. verifyInbound also throws 403 for an unverifiable
+      # signature or a missing hub record, so a broken signing path would sail
+      # through a status-only assertion looking exactly like enforcement working.
+      # That would be the worst possible false pass: the suite would report the
+      # graph check holding while the graph check was never reached. Insist the
+      # refusal names the relationship.
+      report FAIL recipient-enforces "403 but not the mutual check — reason: $reason"
+    else
+      report PASS recipient-enforces "recipient refused a non-mutual: ${reason#*— }"
     fi
   fi
 fi
