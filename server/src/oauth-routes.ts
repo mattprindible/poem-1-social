@@ -18,7 +18,7 @@ import { AuthError, clearOwnerSession, createOwnerSession, requireOwner } from "
 const html = (body: string, status = 200, extraHeaders: Record<string, string> = {}) =>
   new Response(
     `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Poem/1 hub</title>
+<title>SAN hub</title>
 <style>
  body{font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:12vh auto;padding:0 1.5rem}
  code{background:#8881;padding:.15em .35em;border-radius:.25em}
@@ -93,11 +93,11 @@ export async function routeOAuthRequest(request: Request, env: Env): Promise<Res
         const owner = await getOwner(env)
         return html(
           owner
-            ? `<h1>Poem/1 hub</h1><p>This hub is owned by <code>${owner}</code>.</p>
+            ? `<h1>SAN hub</h1><p>This hub is owned by <code>${owner}</code>.</p>
                <p>Sign in again to refresh its authorization.</p>
                <form action="/oauth/login"><input name="handle" placeholder="you.bsky.social" autofocus>
                <button>Sign in</button></form>`
-            : `<h1>Poem/1 hub</h1><p>This hub is <strong>unclaimed</strong>. The first account to
+            : `<h1>SAN hub</h1><p>This hub is <strong>unclaimed</strong>. The first account to
                sign in becomes its owner.</p>
                <form action="/oauth/login"><input name="handle" placeholder="you.bsky.social" autofocus>
                <button>Claim this hub</button></form>`,

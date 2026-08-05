@@ -22,7 +22,7 @@ import { AuthError, requireOwner } from "./auth"
 //
 //   minute-clock                   an app in YOUR repo
 //   alice.bsky.social/minute-clock an app in THEIRS
-//   at://did:plc:…/is.mfd.poem1.app/minute-clock   the same, fully qualified
+//   at://did:plc:…/computer.haha.san.app/minute-clock   the same, fully qualified
 //
 // Reads are open; writes need the owner. That split is not laziness — it is the
 // design. A repo record is public the moment it is published, so gating reads

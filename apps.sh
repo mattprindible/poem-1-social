@@ -46,6 +46,9 @@ Commands:
   run REF                 Load an app onto your own device.
   push TO REF [--force]   Push an app to TO's device. Mutuals only.
   delete RKEY             Remove an app record from your repo.
+  lexicon                 Does this project's schema resolve? (DNS + records)
+  lexicon publish         Publish the schemas into your repo. Only meaningful
+                          for the account the authority's TXT record names.
 
 Hub URL:   --hub URL, then \$RESIDENT_BASE_URL, then ./.resident-hub-url
 Owner token: \$HUB_ADMIN_TOKEN, then keychain (poem1-hub-admin / worker name)
@@ -227,6 +230,19 @@ case "$cmd" in
     [[ -z "$rkey" ]] && { echo "apps: delete needs an RKEY" >&2; exit 2; }
     status=$(call DELETE "/apps/$(urlenc "$rkey")" "" --auth)
     finish "$status" '"Deleted \(.rkey)."'
+    ;;
+
+  lexicon)
+    if [[ "${args[0]:-}" == "publish" ]]; then
+      status=$(call POST /hub/lexicons "" --auth)
+      finish "$status" '"\(.message)\n" +
+        ([.published[] | "  \(.nsid)\n    \(.uri)"] | join("\n"))'
+    else
+      status=$(call GET /hub/lexicons)
+      finish "$status" '
+        ([.lexicons[] | "\(if .resolves then "✓" else "✗" end) \(.nsid)\n    \(.note)"]
+         | join("\n"))'
+    fi
     ;;
 
   -h|--help|help) usage; exit 0 ;;

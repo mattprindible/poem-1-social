@@ -27,11 +27,16 @@ import { PdsError, publicXrpc, xrpc } from "./pds"
 // federation-routes.ts) — the wire format stays frozen at {type, code}.
 
 /**
- * Same namespace, and the same caveat, as HUB_COLLECTION in hub-record.ts:
- * `is.mfd.poem1.*` sits under a domain the hub owner controls, pending the
- * courtesy conversation about `tech.inanimate.*`.
+ * Same authority as HUB_COLLECTION in hub-record.ts: `san.haha.computer`,
+ * reversed by atproto convention into `computer.haha.san.*`.
+ *
+ * Note what this type is NOT called. It is not a Poem/1 app — the record holds
+ * Lua for a sandbox, and the sandbox runs on ESP32 boards generally, so naming
+ * one board here would contradict the definition of a hub in docs/san.md. And
+ * it is not named after the sandbox library either: that project is somebody
+ * else's, and putting their name on our public surfaces is not ours to do.
  */
-export const APP_COLLECTION = "is.mfd.poem1.app"
+export const APP_COLLECTION = "computer.haha.san.app"
 
 /**
  * Generous next to a ~6KB app, and far under any repo limit — this exists to
@@ -220,7 +225,7 @@ export async function listAppRecordsFor(
 /**
  * Parse the ways a person might name an app on the wire or a command line:
  *
- *   at://did:plc:xyz/is.mfd.poem1.app/minute-clock   full AT-URI
+ *   at://did:plc:xyz/computer.haha.san.app/minute-clock   full AT-URI
  *   alice.bsky.social/minute-clock                   handle and rkey
  *   minute-clock                                     rkey in your own repo
  *

@@ -22,11 +22,11 @@ import { resolveIdentity } from "./identity"
 // allowlists and e-ink flip limits are untouched, and the device's hold-to-stop
 // escape hatch works regardless of who sent the app.
 
-export const SIG_HEADER = "x-poem1-signature"
-export const SENDER_HEADER = "x-poem1-sender"
-export const KEY_ID_HEADER = "x-poem1-key-id"
-export const TIMESTAMP_HEADER = "x-poem1-timestamp"
-export const NONCE_HEADER = "x-poem1-nonce"
+export const SIG_HEADER = "x-san-signature"
+export const SENDER_HEADER = "x-san-sender"
+export const KEY_ID_HEADER = "x-san-key-id"
+export const TIMESTAMP_HEADER = "x-san-timestamp"
+export const NONCE_HEADER = "x-san-nonce"
 
 /**
  * How far out of step a request's clock may be. Generous enough for ordinary

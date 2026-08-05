@@ -21,16 +21,22 @@ import { PdsError, publicXrpc, xrpc } from "./pds"
 // Move the hub and you update one record.
 
 /**
- * Reverse-DNS lexicon id, under a domain the hub owner demonstrably controls.
+ * Reverse-DNS lexicon id, under `san.haha.computer` — a domain the project
+ * owner demonstrably controls, and which publishes the schema for this type at
+ * `_lexicon.san.haha.computer` (see lexicon.ts).
  *
  * Every participant publishes under the same NSID — discovery means reading
- * your ties' repos for this collection — so whoever owns the domain is the de
- * facto authority for the type. `tech.inanimate.*` would be the natural
- * long-term home given Poem/1 and Resident are both Matt Webb's, but claiming
- * a namespace on someone else's domain before asking is not ours to do.
- * Migration is cheap while few records exist; it gets expensive later.
+ * your ties' repos for this collection — so one party is necessarily the
+ * authority for the type. That is how lexicons work rather than a
+ * centralization: Bluesky's own schemas resolve to a single DID while the
+ * records live in millions of separate repos. What an authority can do is stop
+ * *defining*; it cannot reach into anyone's repo or interpose on any push.
+ *
+ * Previously `is.mfd.poem1.hub`, which was wrong twice over — a personal handle
+ * for shared fabric, and one board's name on a device-agnostic type. See
+ * docs/san.md.
  */
-export const HUB_COLLECTION = "is.mfd.poem1.hub"
+export const HUB_COLLECTION = "computer.haha.san.hub"
 
 /** Singleton record: one hub per repo. "self" is the atproto convention. */
 export const HUB_RKEY = "self"

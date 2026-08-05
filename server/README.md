@@ -17,7 +17,9 @@ reasoning live in [`../docs/social-plan.md`](../docs/social-plan.md).
 
 ```sh
 npm install
-npm run gen-key | npx wrangler secret put HUB_PRIVATE_JWK   # OAuth client key
+# NOT `npm run gen-key |` — npm prints its banner to STDOUT, so the pipe
+# stores banner+JSON and the hub answers "HUB_PRIVATE_JWK is not valid JSON".
+node scripts/gen-key.mjs | npx wrangler secret put HUB_PRIVATE_JWK   # OAuth client key
 npx wrangler deploy                                         # -> <name>.<account>.workers.dev
 ```
 

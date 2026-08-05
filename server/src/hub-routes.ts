@@ -9,6 +9,7 @@ import {
 } from "./hub-record"
 import { PdsError } from "./pds"
 import { IdentityError, resolveIdentity } from "./identity"
+import { LEXICON_COLLECTION, SCHEMAS, checkLexicon, publishLexicons } from "./lexicon"
 import { KeyError } from "./oauth"
 import { describeError, ownerSession } from "./oauth-routes"
 import { AuthError, requireOwner } from "./auth"
@@ -82,6 +83,43 @@ export async function routeHubIdentityRequest(
       const publicKey = await rotateHubKey(env)
       const result = await publishHubRecord(env, session!, origin)
       return json({ ok: true, publicKey, ...result })
+    }
+
+    // ── The lexicon: does this project's schema resolve? ─────────────────
+    // Ungated read. It reports on public DNS and public records, and "do your
+    // types resolve for a stranger" is precisely a stranger's question.
+    if (path === "/hub/lexicons" && request.method === "GET") {
+      const status = await Promise.all(Object.keys(SCHEMAS).map(checkLexicon))
+      return json({
+        collection: LEXICON_COLLECTION,
+        resolves: status.every((s) => s.resolves),
+        lexicons: status,
+        schemas: SCHEMAS,
+      })
+    }
+
+    // ── Publish the schemas into the owner's repo ────────────────────────
+    // Only meaningful for the account the authority's TXT record names; the
+    // response says which case this is rather than reporting success either way.
+    if (path === "/hub/lexicons" && request.method === "POST") {
+      await requireOwner(env, request)
+      const { session, owner, error } = await ownerSession(env, origin)
+      if (error) return error
+
+      const published = await publishLexicons(session!)
+      const status = await Promise.all(Object.keys(SCHEMAS).map(checkLexicon))
+      const authoritative = status.every((s) => s.dnsDid === owner)
+
+      return json({
+        ok: true,
+        published,
+        authoritative,
+        message: authoritative
+          ? "published, and DNS names this account as the authority"
+          : "published into this repo, but DNS does not name this account — " +
+            "these records resolve for nobody until the TXT record points here",
+        lexicons: status,
+      })
     }
 
     // ── Discovery: find someone else's hub ───────────────────────────────

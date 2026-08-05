@@ -195,7 +195,9 @@ your device.
 
 ```sh
 cd server
-npm run gen-key | npx wrangler secret put HUB_PRIVATE_JWK
+# Run the script directly: `npm run gen-key |` pipes npm's own banner into
+# the secret, and the hub then reports HUB_PRIVATE_JWK as invalid JSON.
+node scripts/gen-key.mjs | npx wrangler secret put HUB_PRIVATE_JWK
 npx wrangler deploy
 ```
 

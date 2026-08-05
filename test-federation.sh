@@ -84,8 +84,8 @@ set -euo pipefail
 # implementation would accept.
 OWNER_HANDLE="${POEM1_OWNER_HANDLE:-mfd.is}"
 
-OWNER_HUB="${POEM1_OWNER_HUB:-https://poem1-hub.service-cloudflare-442.workers.dev}"
-OWNER_WORKER="${POEM1_OWNER_WORKER:-poem1-hub}"
+OWNER_HUB="${POEM1_OWNER_HUB:-https://mfd-hub.service-cloudflare-442.workers.dev}"
+OWNER_WORKER="${POEM1_OWNER_WORKER:-mfd-hub}"
 
 MUTUAL_HUB="${POEM1_MUTUAL_HUB:-https://poem1-hub-haha.service-cloudflare-442.workers.dev}"
 MUTUAL_WORKER="${POEM1_MUTUAL_WORKER:-poem1-hub-haha}"
