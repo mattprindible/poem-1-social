@@ -63,6 +63,42 @@ export interface Device extends DeviceRecord {
   isDefault: boolean
 }
 
+/**
+ * Judge a device against the liveness contract IT declared.
+ *
+ * Returns null when the device declared nothing — and that is the important
+ * case. The default must be "no opinion", never "assume persistent": a device
+ * on older firmware, or a battery board that sleeps by design, would otherwise
+ * be reported as broken for behaving exactly as intended. Silence is only
+ * evidence when something promised not to be silent.
+ *
+ * Deliberately generous — three missed beats before saying anything. A single
+ * missed beat is a slow network, and a liveness check that cries wolf gets
+ * ignored precisely when it is finally right.
+ */
+export function judgeLiveness(
+  twin: unknown,
+  lastHeartbeatAt: number | null,
+): { expect: string; heartbeatSec: number; overdueBy: number | null; healthy: boolean } | null {
+  const live = (twin as { liveness?: { expect?: unknown; heartbeatSec?: unknown } } | undefined)
+    ?.liveness
+  if (!live || typeof live.heartbeatSec !== "number" || live.heartbeatSec <= 0) return null
+
+  const expect = typeof live.expect === "string" ? live.expect : "unknown"
+  if (!lastHeartbeatAt) {
+    return { expect, heartbeatSec: live.heartbeatSec, overdueBy: null, healthy: false }
+  }
+
+  const age = Math.round((Date.now() - lastHeartbeatAt) / 1000)
+  const slack = live.heartbeatSec * 3
+  return {
+    expect,
+    heartbeatSec: live.heartbeatSec,
+    overdueBy: age > slack ? age - slack : null,
+    healthy: age <= slack,
+  }
+}
+
 export class DeviceError extends Error {
   constructor(message: string, readonly status = 400) {
     super(message)

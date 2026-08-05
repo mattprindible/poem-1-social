@@ -45,15 +45,23 @@ export async function hubProfiles(env: Env): Promise<DeviceProfile[]> {
   const seen = new Map<string, DeviceProfile>()
 
   for (const device of devices) {
-    const reported = device.reported as { deviceType?: unknown; screen?: unknown } | undefined
-    const fromDevice = typeof reported?.deviceType === "string" ? reported.deviceType : undefined
+    // A PROJECTION of the twin, never the twin itself. The device reports its
+    // whole composition — drivers, firmware build, liveness — and almost none
+    // of that is a peer's business. What a sender legitimately needs is the
+    // shape they must write for; what board revision you run and when you
+    // flashed it is not part of that question.
+    const twin = device.reported as
+      | { deviceType?: unknown; display?: unknown; screen?: unknown }
+      | undefined
+    const fromDevice = typeof twin?.deviceType === "string" ? twin.deviceType : undefined
     const deviceType = fromDevice ?? device.deviceType
     if (!deviceType) continue // nothing known about it; say nothing rather than guess
 
+    // `display` is the twin's field; `screen` was the older curated one. Read
+    // both so a device on previous firmware keeps being describable.
+    const shape = twin?.display ?? twin?.screen
     const screen =
-      reported?.screen && typeof reported.screen === "object"
-        ? (reported.screen as Record<string, unknown>)
-        : undefined
+      shape && typeof shape === "object" ? (shape as Record<string, unknown>) : undefined
 
     const profile: DeviceProfile = {
       deviceType,

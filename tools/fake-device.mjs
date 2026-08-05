@@ -19,6 +19,8 @@
 //     --fresh       forget the stored key and generate a new one
 //     --type T      what board to claim to be (default poem1)
 //     --screen WxH  what display to claim (default 960x540)
+//     --from FILE   BE a real device: load a twin exported from live hardware
+//                   (./apps.sh twin <id> > poem1.json) and report it verbatim
 //     --hold N      stay connected N seconds instead of exiting on the verdict
 //     --stall MS    BLOCK the event loop for MS after identifying
 //     --slow-identify MS   wait MS before answering the challenge
@@ -55,6 +57,16 @@ const slowIdentifyMs = Number(flagVal("--slow-identify", "0"))
 const chattyMs = Number(flagVal("--chatty", "0"))
 const devType = flagVal("--type", "poem1")
 const [scrW, scrH] = flagVal("--screen", "960x540").split("x").map(Number)
+
+// A twin exported from real hardware, reported back verbatim. This is what
+// stops the simulator drifting from the thing it simulates: --type/--screen are
+// a description someone typed and will forget to update, while a twin is what
+// the device last actually said about itself. Both bugs found on 2026-08-05
+// hid in the gap between an idealised test device and a real one.
+const twinFile = flagVal("--from", "")
+const twin = twinFile
+  ? JSON.parse((await import("node:fs")).readFileSync(twinFile, "utf8"))
+  : null
 const hold = Number(flagVal("--hold", "0"))
 
 const b64 = (buf) => Buffer.from(buf).toString("base64")
@@ -126,9 +138,11 @@ ws.onmessage = async (ev) => {
       type: "identify",
       pubkey,
       sig: b64(sig),
-      device: {
+      // A loaded twin is passed through untouched — the point is to be
+      // indistinguishable from the device it was exported from.
+      device: twin ?? {
         deviceType: devType,
-        screen: { w: scrW, h: scrH },
+        display: { w: scrW, h: scrH },
         fw: "fake-device",
       },
     }))

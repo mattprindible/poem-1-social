@@ -101,6 +101,30 @@ Resident::Sandbox sandbox{makeConfig()};
 // clearPersistedApp() below is what stops the bad app coming straight back.
 static constexpr uint32_t ESCAPE_HOLD_MS = 3000;
 
+// ── Liveness ─────────────────────────────────────────────────────────────
+// Emitted by the FIRMWARE, never by Lua, and that is the whole point: this
+// beat is produced from loop(), the same loop that runs the Lua VM. An app
+// that wedges the VM in a tight loop stops this beat too — which is exactly
+// the failure nothing could previously see, because a wedged app with a live
+// socket looks identical to a calm app with nothing to say.
+//
+// sendSystem, not publishEvent: the control plane must not spend the app's
+// 5/s event budget, least of all on the signal that says whether the app is
+// alive at all.
+static constexpr uint32_t HEARTBEAT_SEC = 30;
+
+static void updateHeartbeat() {
+    static uint32_t lastBeat = 0;
+    uint32_t now = millis();
+    if (lastBeat != 0 && now - lastBeat < HEARTBEAT_SEC * 1000UL) return;
+    lastBeat = now;
+
+    JsonDocument beat;
+    beat["type"] = "heartbeat";
+    beat["up_ms"] = now;
+    sandbox.sendSystem(beat);  // false when offline; nothing to do about it here
+}
+
 static void updateEscapeHatch() {
     static uint32_t downSince = 0;
     static bool fired = false;
@@ -228,12 +252,46 @@ static void handleIdentify(JsonDocument& doc) {
     reply["type"] = "identify";
     reply["pubkey"] = pub;
     reply["sig"] = sig;
+    // ── The twin ─────────────────────────────────────────────────────────
+    // The device's own composition, not a curated summary. Two fields were
+    // hand-picked before this (deviceType, screen), which meant guessing in
+    // advance what every future consumer would want to know — and being wrong.
+    // Emitting what the device IS lets the hub project whatever view it needs
+    // and lets tools/fake-device.mjs instantiate this exact board.
+    //
+    // Everything here is introspected or compiled in. Notably ABSENT: power
+    // source. Wall or battery is a deployment fact, not a firmware one — this
+    // same binary runs either way, and this board has a battery ADC while
+    // living on wall power, so anything inferring "battery ADC => portable"
+    // would be wrong about the device it is describing.
     JsonObject device = reply["device"].to<JsonObject>();
     device["deviceType"] = "poem1";
-    JsonObject screen = device["screen"].to<JsonObject>();
-    screen["w"] = poemDisplay.width();
-    screen["h"] = poemDisplay.height();
-    screen["colors"] = 2;  // 1-bit e-ink
+
+    JsonObject fw = device["firmware"].to<JsonObject>();
+    fw["sketch"] = "poem-1-social";
+    fw["built"]  = __DATE__ " " __TIME__;
+    // No Resident version: the library exposes neither a macro nor an
+    // accessor, and a hardcoded copy would keep claiming 0.7.0 silently after
+    // the next ./sync.sh. Better to omit a fact than to publish a stale one.
+
+    JsonObject disp = device["display"].to<JsonObject>();
+    disp["kind"]   = "eink";
+    disp["w"]      = poemDisplay.width();
+    disp["h"]      = poemDisplay.height();
+    disp["colors"] = 2;  // 1-bit
+
+    // The drivers actually wired into cfg.extensions, listed here rather than
+    // enumerated because Resident's Driver interface exposes no name().
+    JsonArray drivers = device["drivers"].to<JsonArray>();
+    for (const char* d : {"screen", "button", "i2c", "gpio", "adc", "led"}) drivers.add(d);
+
+    // DECLARED, because composition cannot reveal it: this firmware never
+    // sleeps, so a gap in its heartbeat means something is wrong rather than
+    // something is resting. A sleepy board's firmware would say "intermittent"
+    // and its absences would be ordinary.
+    JsonObject live = device["liveness"].to<JsonObject>();
+    live["expect"]       = "persistent";
+    live["heartbeatSec"] = HEARTBEAT_SEC;
     sandbox.sendSystem(reply);
 
     Serial.printf("[identity] answered challenge in %lums, fingerprint %s\n",
@@ -403,4 +461,5 @@ void loop() {
     sandbox.loop();
     updateEscapeHatch();
     updateHubFallback();
+    updateHeartbeat();
 }

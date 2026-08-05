@@ -221,6 +221,12 @@ export class DeviceAgent extends RelayAgent<Env> {
       // replayable-looking artefact in a ring buffer the owner reads.
       if (await this.handleAuth(connection, data)) return
 
+      // Heartbeats are liveness, not events. Recorded as a timestamp rather
+      // than a ring entry: one every 30s would evict the ring's real contents
+      // in about an hour, burying the compile errors and app frames the log
+      // exists to keep.
+      if (await this.absorbHeartbeat(connection, data)) return
+
       // A device with a key on file speaks only through a proved connection.
       // Otherwise anyone holding the id could write the owner's event log —
       // the log being the thing the owner reads to decide the device is fine.
@@ -302,6 +308,27 @@ export class DeviceAgent extends RelayAgent<Env> {
     const pending = state.pending ?? []
     if (pending.length >= MAX_PENDING) return // never grows; see MAX_PENDING
     connection.setState({ ...state, pending: [...pending, raw] })
+  }
+
+  /**
+   * Consume a firmware heartbeat. Returns true when the frame WAS one.
+   *
+   * Only from a connection entitled to speak for the device — an unproved
+   * socket must not be able to make a device look alive.
+   */
+  private async absorbHeartbeat(connection: Connection, raw: string): Promise<boolean> {
+    if (!raw.includes('"heartbeat"')) return false // cheap reject before parsing
+    let msg: { channel?: unknown; type?: unknown }
+    try {
+      msg = JSON.parse(raw)
+    } catch {
+      return false
+    }
+    if (msg.channel !== "system" || msg.type !== "heartbeat") return false
+    if (!(await this.speaksForDevice(connection))) return true // consumed, ignored
+
+    await this.ctx.storage.put("lastHeartbeatAt", Date.now())
+    return true
   }
 
   private async handleAuth(connection: Connection, raw: string): Promise<boolean> {
@@ -440,6 +467,7 @@ export class DeviceAgent extends RelayAgent<Env> {
     events: DeviceEvent[]
     deviceConnected: boolean
     lastEventAt: number | null
+    lastHeartbeatAt: number | null
   }> {
     this.ensureTable()
     const capped = Math.max(1, Math.min(Math.trunc(limit) || 1, MAX_EVENTS))
@@ -454,6 +482,7 @@ export class DeviceAgent extends RelayAgent<Env> {
       events: rows,
       deviceConnected: Array.from(this.getConnections("device")).length > 0,
       lastEventAt: rows.length > 0 ? Math.max(...rows.map((r) => r.at)) : null,
+      lastHeartbeatAt: (await this.ctx.storage.get<number>("lastHeartbeatAt")) ?? null,
     }
   }
 }

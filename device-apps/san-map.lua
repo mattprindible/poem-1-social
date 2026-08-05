@@ -66,8 +66,18 @@ local function stamp(ctx)
   -- Clock lives in its own strip so the minute tick can be a small, cheap
   -- update rather than a full-screen redraw. On a wall its real job is to prove
   -- the panel is live and not frozen.
+  --
+  -- localtime_* CAN BE NIL, which cost a runtime error on this very device:
+  -- the timezone is resolved over the network from onConnected, and an app that
+  -- auto-restores at boot runs before that lookup finishes. Falling back to UTC
+  -- keeps the clock honest about which one it is showing rather than printing a
+  -- wrong local time or crashing.
+  local h, m, label = ctx.localtime_h, ctx.localtime_m, "local"
+  if h == nil or m == nil then h, m, label = ctx.utc_h, ctx.utc_m, "utc" end
+  if h == nil or m == nil then return end
+
   screen.fill_rect(W - 260, H - 58, 200, 24, WHITE)
-  screen.text(W - 260, H - 58, string.format("%02d:%02d local", ctx.localtime_h, ctx.localtime_m), 2, BLACK)
+  screen.text(W - 260, H - 58, string.format("%02d:%02d %s", h, m, label), 2, BLACK)
 end
 
 function init(ctx)
@@ -86,8 +96,9 @@ function init(ctx)
 end
 
 function on_tick(ctx, dt_ms)
-  if ctx.localtime_m == last_minute then return end
-  last_minute = ctx.localtime_m
+  local m = ctx.localtime_m or ctx.utc_m
+  if m == nil or m == last_minute then return end
+  last_minute = m
   stamp(ctx)
   -- 'fast' for the minute tick. The firmware coalesces flips and slips in a
   -- quality refresh every ~60 fast ones, so ghosting cleans itself up without

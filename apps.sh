@@ -51,6 +51,9 @@ Commands:
                           Start carrying a device. Until claimed, a device gets
                           no socket and no traffic from this hub.
   release ID              Stop carrying a device.
+  twin ID                 Print a device's self-reported twin as JSON. Feed it
+                          to tools/fake-device.mjs --from to simulate that exact
+                          board.
   pair ID                 Open a pairing window, then reconnect the device to
                           bind its identity key. Re-pairing clears the old key —
                           that is how a reflashed device gets back in.
@@ -155,10 +158,15 @@ call() {  # method path [payload] [--auth]
 }
 
 # Print the body and exit non-zero unless the status is 2xx.
-finish() {  # status [success-jq]
-  local status="$1" filter="${2:-.}"
+finish() {  # status [--raw] [success-jq]
+  local status="$1"; shift
+  local raw=0
+  [[ "${1:-}" == "--raw" ]] && { raw=1; shift; }
+  local filter="${1:-.}"
   if [[ "$status" =~ ^2 ]]; then
-    jq -r "$filter" < "$BODY"
+    # --raw emits JSON rather than a formatted line, for output meant to be
+    # piped into another tool instead of read by a person.
+    if [[ "$raw" -eq 1 ]]; then jq "$filter" < "$BODY"; else jq -r "$filter" < "$BODY"; fi
     exit 0
   fi
   echo "apps: HTTP $status" >&2
@@ -268,6 +276,13 @@ case "$cmd" in
        + (if $d == 1 then {makeDefault: true} else {} end)')
     status=$(call POST /hub/devices "$payload" --auth)
     finish "$status" '"Claimed \(.device.deviceId)\(if .device.isDefault then " (default)" else "" end)."'
+    ;;
+
+  twin)
+    id="${args[0]:-}"
+    [[ -z "$id" ]] && { echo "apps: twin needs a device ID" >&2; exit 2; }
+    status=$(call GET /hub/devices "" --auth)
+    finish "$status" --raw "[.devices[] | select(.deviceId == \"$id\") | .reported] | first // empty"
     ;;
 
   pair)

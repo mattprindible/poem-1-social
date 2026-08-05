@@ -17,6 +17,7 @@ import {
   DeviceError,
   claimDevice,
   getDevice,
+  judgeLiveness,
   updateDevice,
   defaultDevice,
   listDevices,
@@ -172,10 +173,27 @@ export async function routeFederationRequest(
 
       if (request.method === "GET") {
         const [devices, win] = await Promise.all([listDevices(env), readPairWindow(env)])
+
+        // Liveness is answered per device, live, from each agent — and only
+        // for devices that declared a contract to be judged against.
+        const withLiveness = await Promise.all(
+          devices.map(async (d) => {
+            const agent = await getAgentByName(env.DeviceAgent, d.deviceId)
+            const report = await agent.recentEvents(1)
+            const liveness = judgeLiveness(d.reported, report.lastHeartbeatAt)
+            return {
+              ...d,
+              connected: report.deviceConnected,
+              lastHeartbeatAt: report.lastHeartbeatAt,
+              ...(liveness ? { liveness } : {}),
+            }
+          }),
+        )
+
         return json({
           count: devices.length,
           ...(win ? { pairing: { deviceId: win.deviceId, expiresAt: new Date(win.expiresAt).toISOString() } } : {}),
-          devices,
+          devices: withLiveness,
         })
       }
 

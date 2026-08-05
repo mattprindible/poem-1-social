@@ -157,6 +157,17 @@ function on_event(ctx, event) end   -- button presses, app_event messages
 `localtime_m`. The device timezone is set (America/New_York), so `localtime_*`
 and `time.*` are real local time.
 
+> [!WARNING]
+> **`localtime_*` can be `nil`.** The timezone is resolved over the network
+> after connect, and an app that auto-restores at boot runs *before* that
+> finishes — so `string.format('%02d', ctx.localtime_h)` throws
+> `number expected, got nil` on exactly the boot nobody is watching. Guard it,
+> and fall back to `utc_*`:
+> ```lua
+> local h = ctx.localtime_h or ctx.utc_h
+> if h == nil then return end
+> ```
+
 ## Persistence & boot behavior
 
 The last successfully-loaded app is saved on-device and **auto-restores after

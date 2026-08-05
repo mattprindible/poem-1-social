@@ -173,6 +173,36 @@ matters: anyone can browse a builder's apps with no hub, no device and no
 account. Writes go through the owner's OAuth session, because the only repo this
 hub can write is its owner's.
 
+### The twin
+
+A device reports its own **composition** on the identify frame — board type,
+firmware build, display, drivers wired up, and a declared liveness contract —
+rather than a handful of fields someone chose in advance. The hub stores it
+per device and keeps it **local**: nothing device-related is ever written to a
+PDS, and what a mutual can probe is a deliberate *projection* of the twin
+(shape only), not the twin itself.
+
+`./apps.sh twin <id>` exports it, and `tools/fake-device.mjs --from <file>`
+becomes that exact board — so the test rig tracks real hardware instead of
+drifting from a description someone forgot to update.
+
+**Power source is deliberately absent.** Wall or battery is a deployment fact,
+not a firmware one: the same binary runs either way, and this Poem/1 has a
+battery ADC while living on wall power. Anything inferring portability from
+composition would be wrong about the device it is describing.
+
+### Liveness
+
+`liveness: { expect, heartbeatSec }` is **declared**, because composition cannot
+reveal it. The firmware emits a heartbeat from `loop()` — never from Lua — so an
+app that wedges the VM stops the beat too, which is the failure nothing else can
+see. Heartbeats are stored as a timestamp rather than ring entries; one every
+30s would evict an hour of real history.
+
+A device that declares nothing gets **no judgement at all** — not a default of
+"assume persistent", which would report every sleepy or older-firmware device as
+broken. Silence is only evidence when something promised not to be silent.
+
 ### Reading a device's log
 
 `GET /hub/device/events` reports the **default** device; `?deviceId=<id>` reads
