@@ -33,11 +33,21 @@ account.
 
 What does NOT exist yet: weak-tie discovery, and any of the onboarding work.
 
-**Namespace note:** records use `is.mfd.poem1.*`, under a domain the hub owner
-controls. `tech.inanimate.*` would be the natural long-term home given Poem/1 and
-Resident are both Matt Webb's, but claiming a namespace on someone else's domain
-before asking is not ours to do. Migration is cheap while few records exist — it
-is one of the reasons to have that courtesy conversation early.
+**Stepping back, 2026-08-05.** Reviewing the code against the concept turned up
+two things it had assumed rather than chosen: a hub carries exactly one device,
+and the record types are named after one person's handle and one board. Both are
+being corrected — the definition of a hub, the `computer.haha.san.*` namespace,
+and the staged migration are in [`san.md`](san.md). That review also found that
+**the direct relay path is unauthenticated**, which is the most urgent item in
+this project and is described under "Push is the only write path" below.
+
+**Namespace — SETTLED 2026-08-05, migration not yet done.** Records currently use
+`is.mfd.poem1.*` and will move to `computer.haha.san.*`, under the authority
+`san.haha.computer`. The old namespace was wrong on two independent axes: it
+carried a *personal handle*, and it named *one board* in a type that describes a
+sandbox app. See [`san.md`](san.md) for the reasoning and the staged migration.
+`tech.inanimate.*` remains not ours to claim without asking; the same courtesy
+now also keeps "Resident" out of every NSID, URL and wire identifier.
 Supersedes the earlier "self-hosted Worker" napkin sketch (auth + error feedback),
 which was two chores bundled together rather than a design.
 
@@ -62,8 +72,21 @@ Identity and the social graph come from **AT Protocol** (Bluesky accounts).
 | Weak tie | Follower-of-follower | **Discovery only** — their apps appear when you search. No write access, ever. |
 
 Push is the only write path, and only mutuals have it. Everything a weak tie
-offers you, *you* pull. Nothing unbidden reaches your hardware from outside your
-mutuals.
+offers you, *you* pull.
+
+> ⚠️ **"Nothing unbidden reaches your hardware from outside your mutuals" is NOT
+> TRUE TODAY.** That was written as a description of the design and has been
+> read since as a description of the system. The *federated* path enforces it —
+> signature plus mutual check, with the refusals proven. The **direct relay path
+> does not authenticate at all**: `POST /devices/<id>/send` with no credential
+> returned 200 against the live hub on 2026-08-05. Hub URLs are public by
+> design and device IDs are printed on the device's screen.
+>
+> Device-side *mechanism* is unaffected — sandbox, driver allowlist, flip limits
+> and hold-to-stop all hold against a hostile push from any source — so the
+> exposure is "anyone can put things on your screen", not "anyone can take your
+> Wi-Fi credentials". Closing it is the **claiming** work in [`san.md`](san.md),
+> and it is the highest-priority item in this project.
 
 Social trust changes **policy** (who may push), never **mechanism** (what pushed
 code can do). The Lua sandbox, driver allowlists, and e-ink flip rate limits stay
@@ -73,11 +96,17 @@ exfiltrated Wi-Fi credentials.
 ## Topology
 
 ```
-your device ⇄ (WSS) ⇄ your hub ⇄ (HTTPS) ⇄ their hub ⇄ (WSS) ⇄ their device
+your devices ⇄ (WSS) ⇄ your hub ⇄ (HTTPS) ⇄ their hub ⇄ (WSS) ⇄ their devices
 ```
 
 Each person runs their own hub (a Cloudflare Worker + Durable Object). A device
-only ever holds a socket to its **owner's** hub. Federation is ordinary HTTPS
+only ever holds a socket to its **owner's** hub.
+
+> **A hub carries MANY devices — one owner, N devices.** The code does not do
+> this yet: it stores a single device pointer, which was an unexamined
+> convenience from the days of one person and one Poem/1. Resident runs on ESP32
+> boards generally and this repo already has a second device. The definition,
+> the cardinalities, and what has to change are in [`san.md`](san.md). Federation is ordinary HTTPS
 between two public endpoints — no NAT traversal, no P2P, no rendezvous server.
 
 The hub's job is deliberately small: hold the device socket, relay pushes, verify

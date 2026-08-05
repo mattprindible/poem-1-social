@@ -102,6 +102,16 @@ A fresh clone pushes to the public relay at `resident.inanimate.tech`. That
 relay has **no authentication** — anyone who knows your device ID can push code
 to your Poem/1 — so this project runs its own hub instead.
 
+> [!WARNING]
+> **Running your own hub does not fix that yet.** It changed who hosts the
+> relay, not whether it authenticates: `POST /devices/<id>/send` against your
+> own hub, with no credential, still returns 200. The *federated* path (hub to
+> hub) is properly authenticated and its refusals are proven; the direct relay
+> path is not. Closing this is the "claiming" work in
+> [`docs/san.md`](docs/san.md). Until then, treat your hub URL as more sensitive
+> than it looks — and note the 3-second hold still stops anything, whoever sent
+> it.
+
 [`server/`](server/) is a Cloudflare Worker (copied from Resident's
 `server-template`) that speaks the same protocol. Deploy your own, then move the
 device to it **over the air — no reflashing**:
