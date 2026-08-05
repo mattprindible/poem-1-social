@@ -1,10 +1,15 @@
 # SAN — the Social Area Network
 
-**Status:** definition agreed 2026-08-05, and **all six stages built and verified
-the same day** — namespace, lexicon, device claiming, many devices per
-hub, and the naming sweep. Stage 4 (device identity and self-description) has
-its **hub half built and proven against a simulated device**; the firmware half
-is built and verified on hardware. **All six stages are done.**
+**Status:** definition agreed 2026-08-05. **All six stages are built and
+verified on hardware** — namespace and lexicon, device claiming, many devices
+per hub, device identity and self-description, discovery by probing, and the
+naming sweep.
+
+Three things followed from putting a real app on a real wall rather than
+reasoning about it: the **twin** (the device describes its own composition, and
+the simulator can become it), **liveness** (a firmware heartbeat, and a contract
+the device declares rather than one the hub assumes), and **link diagnostics**
+(silence now carries its own cause). Those are folded into the stages below.
 
 It exists because the working code had drifted into assumptions nobody chose:
 one hub means one device, and the record types carried a personal handle and a
@@ -208,10 +213,14 @@ The firmware already knows what it is (`cfg.deviceType = "poem1"` in
 field. It simply never reaches the hub: the `hello` frame sends `host`, `stored`
 and `fellback`, and not the type.
 
-So the app record probably needs to declare what it targets, and the hub needs to
-know what each claimed device is. Both are the same missing fact travelling one
-hop further. **Note this half needs a reflash** — the `hello` frame is firmware —
-so it should be batched with any other firmware work rather than done alone.
+So the app record probably needs to declare what it targets, and the hub needs
+to know what each claimed device is. Both are the same missing fact travelling
+one hop further.
+
+**The hub half is done** — the device reports its display in its twin (stage 4),
+and a mutual can probe for the shape before writing. What is still missing is the
+other end: an app record carries no target, so nothing yet refuses a push that
+would render as garbage. That is the open piece.
 
 ## Staged migration
 
@@ -284,7 +293,7 @@ The sender must not pick, because a sender never learns a device id and that
 should not change. A lone device is the default without anyone saying so, which
 keeps the common case free of a setup step whose purpose nobody would guess.
 
-### 4. Device identity and self-description — HUB HALF BUILT 2026-08-05
+### 4. Device identity and self-description — DONE 2026-08-05
 
 **BUILT AND VERIFIED ON HARDWARE 2026-08-05.** The Poem/1 (`fccf2990`) generates
 its own P-256 key, keeps it in NVS, and proves it per connection. Its serial log
@@ -359,17 +368,88 @@ Why not permanent TOFU with no window: a device that reconnects constantly gives
 an attacker many chances to be first, and "first" is not a property anyone can
 observe after the fact. A window makes the risky moment short and deliberate.
 
-#### Self-description: the device's own word
+#### Self-description: the TWIN — BUILT 2026-08-05
 
-`hello` gains what the device knows about itself — `deviceType`, firmware and
-Resident versions, screen geometry, and the drivers `main.cpp` actually wired
-up. The hub records it against the claimed device, replacing the owner-declared
-`deviceType` with the device's own account of itself.
+The device reports its own **composition** on the identify frame (not `hello` —
+self-description must ride on a frame that has been *proved*): board type,
+firmware build, display, the drivers `main.cpp` wired up, and a declared
+liveness contract. The hub records it against the claimed device, replacing the
+owner-declared `deviceType` with the device's own account of itself.
 
-This is the fix for a real failure mode already noted above: Lua written for a
-Poem/1 panel compiles cleanly on an M5Stick and renders garbage, and the error
-channel reports success. A push can only be checked for compatibility if
-something knows what the target actually is.
+Composition, not curation. The first version hand-picked `deviceType` and
+`screen`, which meant deciding in advance what every future consumer would need
+— and being wrong. A twin lets the hub project whatever view it requires.
+
+**One artifact, two consumers**, which is what earns it:
+
+```
+device emits twin ──┬──▶ hub: discovery, per-device knowledge
+                    └──▶ tools/fake-device.mjs --from: BE that board
+```
+
+`./apps.sh twin <id>` exports it. The simulator then stops drifting from the
+hardware it stands in for — and drift is exactly where the two bugs of
+2026-08-05 hid.
+
+No Resident version is reported: the library exposes neither a macro nor an
+accessor, and a hardcoded copy would go on claiming 0.7.0 after the next
+`./sync.sh`. Better to omit a fact than publish a stale one.
+
+This also fixes a real failure mode noted above: Lua written for a Poem/1 panel
+compiles cleanly on an M5Stick and renders garbage, with the error channel
+reporting success. A push can only be checked for compatibility if something
+knows what the target actually is.
+
+#### What the twin deliberately does NOT carry
+
+**Power source.** Wall or battery is a *deployment* fact, not a firmware one —
+the same binary runs either way, and this Poem/1 has a battery ADC while living
+on wall power. Anything inferring portability from composition would be wrong
+about the very device it is describing.
+
+**Anything an agent could "just infer."** Inference produces a belief, and
+beliefs are what this project spent a day replacing with asking. If the device
+knows, the device says.
+
+The twin also stays **hub-local**. Nothing device-related is written to a PDS,
+and the capability probe remains a live *projection* answered to mutuals. A
+published twin would make the exposure richer and permanent rather than
+smaller — obscurity is not privacy.
+
+#### Liveness — BUILT 2026-08-05
+
+`liveness: { expect, heartbeatSec }` is **declared**, for the reasons above. The
+heartbeat is emitted by the FIRMWARE from `loop()`, never by Lua, and that is
+the whole design: an app that wedges the Lua VM stops the beat with it, which is
+the one failure nothing else can see — a wedged app with a live socket looks
+exactly like a calm app with nothing to say.
+
+Heartbeats are kept as a timestamp, not ring entries; one every 30s would evict
+an hour of real history within the hour.
+
+**A device that declares nothing gets no judgement at all.** Not a default of
+"assume persistent", which would report every sleepy board and every device on
+older firmware as broken. Silence is evidence only when something promised not
+to be silent. This is the single most important line in the section.
+
+#### Diagnosing silence
+
+The ring records the link itself — `link_up` / `link_down` with the close code —
+so silence has a cause written next to it rather than needing a theory:
+
+| Pattern | Means |
+|---|---|
+| `app_received`, `link_down 1006` | the socket died; the app may be fine |
+| `app_received`, `compile_error` | the app failed; the link is fine |
+| `link_down 1008 verified=false` | **we** refused it, on identity |
+| `link_up` with no preceding `link_down` | the **hub** restarted (a deploy tears the DO down first) |
+
+Measured while building this, and worth recording because it disproved the
+theory that motivated it: the hub tolerates a **20-second** client block without
+dropping the socket, and an 8-second delay before answering the identity
+challenge still verifies. So the connection loss of 2026-08-05 was initiated
+device-side, not by Cloudflare giving up. The cause remains unknown, and saying
+so is better than repeating a guess.
 
 ### 5. Discovery: probe, do not remember — BUILT 2026-08-05
 
@@ -409,13 +489,7 @@ peer's hub, three profiles returned, and the response carries only
 "someone typed poem1" are different claims, and a peer choosing what to push
 should be able to tell which one it got.
 
-### 6. Device type, end to end (superseded by stage 4 above)
-
-Firmware `hello` carries `deviceType`; the hub records it per claimed device; the
-app record gains a target field; pushes to a mismatched device warn or refuse.
-**Needs a reflash** — batch accordingly.
-
-### 5. Verbiage — DONE 2026-08-05
+### 6. Verbiage — DONE 2026-08-05
 
 Headers, cookie, `client_name`, page title and every worker name are changed;
 each worker is now named for the identity that owns it.
