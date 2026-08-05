@@ -1,4 +1,5 @@
-import { DeviceAgent, routeDeviceRequest } from "@inanimate/resident/cloudflare"
+import { routeDeviceRequest } from "@inanimate/resident/cloudflare"
+import { DeviceAgent } from "./device-agent"
 import {
   CLIENT_METADATA_PATH,
   JWKS_PATH,
@@ -15,6 +16,11 @@ import { routeFederationRequest } from "./federation-routes"
 
 // Cloudflare needs the Durable Object classes re-exported at the worker entry
 // so it can instantiate them for the bindings declared in wrangler.jsonc.
+//
+// `DeviceAgent` is OUR subclass (./device-agent), not upstream's, so the device
+// can talk back — but it is exported under the same name upstream's had, which
+// is what keeps the binding and its migration identity unchanged. See the
+// header of device-agent.ts.
 export { DeviceAgent, HubStore }
 
 const json = (body: unknown, status = 200) =>

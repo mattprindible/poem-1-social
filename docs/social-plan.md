@@ -218,14 +218,32 @@ at once. Cache aggressively; treat the graph as advisory state, not live truth.
    firmware binary serves everybody, which removes a per-person build from the
    onboarding path.
 
-5. **Devices still can't talk back.** `DeviceAgent.onMessage` is a no-op, so
-   nothing the device emits reaches the hub. This bites already: `set-hub.sh` can
-   only confirm a hub switch by watching the destination's connection count rise,
-   which is best-effort — Durable Objects keep hibernating WebSockets from old
-   boots, so a hub the device left hours ago still reports connections, and a
-   naive non-zero check produced a confident false positive during testing.
-   Overriding `onMessage` is the fix, and it is also the compile/runtime error
-   feedback channel. Probably the first thing to build on the hub after identity.
+5. **Devices can talk back — BUILT and verified 2026-08-04.** Upstream's
+   `DeviceAgent.onMessage` is an empty function, so everything a device emitted
+   reached the hub and was dropped. `server/src/device-agent.ts` subclasses it
+   (exported under the same name, so the Durable Object needs no migration),
+   records device frames in a bounded SQLite ring, and serves them at
+   owner-gated `GET /hub/device/events`.
+
+   The emit half was already in stock Resident — `events.send` in Lua,
+   `publishEvent` in C++ — so this was a **hub change with no reflash**, which is
+   why it was cheaper than its position in this list suggested.
+
+   Verified end to end on hardware: `device-apps/phone-home.lua` pushed over the
+   air, and `hello` / `heartbeat` / `button` frames read back out of the hub with
+   the device's own `from`, `nonce` and local clock on them.
+
+   *Still open:* this is a **read surface, not yet a feedback channel.** The
+   thing that would pay for itself next is the firmware reporting compile and
+   runtime errors the same way, so a pushed app that fails to load stops failing
+   silently — today that still needs a USB cable. That one *does* need a reflash.
+
+   It also gives `set-hub.sh` the answer it never had. It currently infers a hub
+   switch from the destination's connection count, which is best-effort —
+   hibernating WebSockets from old boots mean a hub the device left hours ago
+   still reports connections, and a naive non-zero check produced a confident
+   false positive during testing. `lastEventAt` is a timestamp the device caused;
+   a count is not. Rewiring `set-hub.sh` onto it is not done yet.
 
 ## The real bottleneck
 

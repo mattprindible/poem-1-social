@@ -84,6 +84,7 @@ cat my-app.lua | ./send-app.sh --device-id <id>
 Apps in [`device-apps/`](device-apps/): `minute-clock`, `battery-watch`,
 `hello-status`, `first-light`, `hw-survey`, `nightfall` (a still night scene,
 drawn once and left alone — the calmest thing to leave on the panel), `standby`,
+`phone-home` (reports back to the hub — see [Hearing the device](#hearing-the-device)),
 plus two test fixtures — `runaway` (misbehaves deliberately, to exercise the
 escape hatch) and `federated-hello` (renders who pushed it, used by
 [`test-federation.sh`](test-federation.sh)).
@@ -121,6 +122,33 @@ Once the device is on your hub it is **not** reachable on the public relay any
 more. If it ever can't reach a stored hub, it falls back to the public relay for
 the rest of that boot — keeping NVS intact and leaving you a way in — so a typo'd
 hostname costs a reboot, never a reflash.
+
+### Hearing the device
+
+Pushes go one way; the device's own reports come back the other. A Lua app calls
+stock Resident's `events.send(name, data)`, and the hub records what arrives:
+
+```sh
+curl -H "Authorization: Bearer $HUB_ADMIN_TOKEN" https://<your-hub>/hub/device/events
+```
+
+```json
+{ "deviceId": "…", "deviceConnected": true, "lastEventAt": 1785895724053,
+  "events": [ { "seq": 1, "at": 1785895724053, "channel": "app",
+                "type": "heartbeat", "body": "{…}" } ] }
+```
+
+Owner-gated, not device-ID-gated: a device ID is the credential for *pushing* to
+a device, but what a device *emits* is yours. `./send-app.sh device-apps/phone-home.lua`
+is a working example — it says hello on load, heartbeats slowly, and reports
+every button tap.
+
+Prefer `lastEventAt` to `deviceConnected` as proof of life. Durable Objects keep
+hibernating WebSockets from old boots, so the connection count can report a
+device that left hours ago; a recorded event cannot.
+
+The emit side was in the firmware all along — this needed a hub change only, no
+reflash. See [`server/src/device-agent.ts`](server/src/device-agent.ts).
 
 ## The social layer
 
