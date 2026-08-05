@@ -125,7 +125,7 @@ lifetime and can.
 | `GET \| POST /hub/devices` 🔒 | list / claim devices |
 | `DELETE /hub/devices/<id>` 🔒 | release one |
 | `GET \| POST /hub/device` 🔒 | which device inbound federation lands on |
-| `GET /hub/device/events` 🔒 | what that device has **said back** — see below |
+| `GET /hub/device/events[?deviceId=]` 🔒 | what a device has **said back** — see below |
 | `POST /hub/device/app` 🔒 | load an app onto **your own** device |
 
 🔒 = owner only. Send `Authorization: Bearer $HUB_ADMIN_TOKEN`, or use the browser
@@ -172,6 +172,23 @@ published, so gating would protect nothing while breaking the property that
 matters: anyone can browse a builder's apps with no hub, no device and no
 account. Writes go through the owner's OAuth session, because the only repo this
 hub can write is its owner's.
+
+### Reading a device's log
+
+`GET /hub/device/events` reports the **default** device; `?deviceId=<id>` reads
+any claimed one. Alongside what the device says, the ring records the link
+itself, which is what lets silence be diagnosed rather than guessed:
+
+| Pattern | Means |
+|---|---|
+| `app_received`, `link_down code=1006` | the socket died — the app may be fine |
+| `app_received`, `compile_error` | the app failed — the link is fine |
+| `link_down code=1008 verified=false` | **we** refused it — a failed identity check |
+| `link_up` with no preceding `link_down` | the **hub** restarted (a deploy tears the DO down before it can record the close) |
+
+What it still cannot see: an app that wedges the Lua VM while its socket stays
+up. That is indistinguishable from a calm app with nothing to say, because the
+firmware sends no heartbeat of its own.
 
 ### The device's return path
 

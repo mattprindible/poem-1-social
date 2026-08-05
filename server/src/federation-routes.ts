@@ -285,7 +285,16 @@ export async function routeFederationRequest(
     // dashboard.
     if (path === "/hub/device/events" && request.method === "GET") {
       await requireOwner(env, request)
-      const deviceId = await getDeviceId(env)
+
+      // ?deviceId= picks which claimed device to read; without it you get the
+      // default. Multi-device landed without this, which meant a hub could
+      // CARRY four devices and only ever show you one device's log — the other
+      // three were invisible, which is a poor answer to "is my stuff alright".
+      const asked = url.searchParams.get("deviceId")?.trim()
+      if (asked && !(await getDevice(env, asked))) {
+        throw new DeviceError(`'${asked}' is not claimed by this hub`, 404)
+      }
+      const deviceId = asked ?? (await getDeviceId(env))
       if (!deviceId) {
         return json({ error: "no_device", message: "this hub has no device set" }, 404)
       }

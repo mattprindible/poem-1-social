@@ -146,6 +146,10 @@ export class DeviceAgent extends RelayAgent<Env> {
     const url = new URL(ctx.request.url)
     if (url.searchParams.get("monitor") === "1") return
 
+    // Record the link coming up, in the SAME ring as everything the device
+    // says. See onClose() for why this matters more than it looks.
+    this.record(JSON.stringify({ channel: "link", type: "link_up" }))
+
     const challenge = newChallenge()
     // Connection state, NOT an in-memory map: Durable Objects hibernate with
     // their WebSockets still open, and a map would come back empty while the
@@ -155,6 +159,60 @@ export class DeviceAgent extends RelayAgent<Env> {
     connection.send(JSON.stringify({ channel: "system", type: "identify", challenge }))
   }
 
+
+  /**
+   * Record the link going down, and WHY.
+   *
+   * THE PROBLEM THIS SOLVES. When a device goes quiet the log used to show
+   * `app_received` followed by nothing, and nothing distinguished "the app you
+   * just pushed broke the device" from "the socket died and the app is fine."
+   * Those call for opposite responses, and on 2026-08-05 that ambiguity
+   * produced a confidently wrong diagnosis: the app was rendering happily on
+   * the panel the entire time, and only a photograph settled it.
+   *
+   * The hub always knew. Upstream hands the close code straight to this hook,
+   * and we were discarding it. So now silence has a cause written next to it:
+   *
+   *   app_received, link_down(1006)   -> the socket died; the app may be fine
+   *   app_received, compile_error     -> the app failed; the link is fine
+   *   app_received, link_down(1008)   -> WE closed it — identity refused
+   *
+   * What this still cannot see: an app that wedges the Lua VM while the socket
+   * stays up. That looks exactly like a calm app with nothing to say, because
+   * the firmware sends no heartbeat of its own. Worth knowing before trusting
+   * silence in either direction.
+   */
+  // Params after `connection` are optional ONLY to satisfy a type: upstream's
+  // DeviceAgent narrows this hook to `(connection)`, while partyserver actually
+  // passes all four at runtime. Declaring them required makes the subclass
+  // incompatible with the binding's type; declaring them optional keeps the
+  // values we need and the type upstream expects.
+  onClose(connection: Connection, code?: number, reason?: string, wasClean?: boolean): void {
+    // Guard on the connection's own STATE, not isDevice(): onConnect sets
+    // `verified` on device connections and returns early for monitors, so its
+    // presence is what marks this a device socket — and unlike the live tag
+    // set, state travels with the connection into the close.
+    const st = connection.state as ConnState | null
+    if (st && st.verified !== undefined) {
+      this.record(
+        JSON.stringify({
+          channel: "link",
+          type: "link_down",
+          code: code ?? null,
+          reason: reason || undefined,
+          wasClean: wasClean ?? null,
+          // Whether it had proved itself matters when reading these back: a
+          // refused impostor and a dropped device both close, and only this
+          // says which one just left.
+          verified: (connection.state as ConnState | null)?.verified === true,
+        }),
+      )
+    }
+    // Upstream's TYPE takes one argument; the runtime hands it four. Forward
+    // everything we were given rather than dropping three on the floor to
+    // please a declaration that does not match its own implementation.
+    ;(super.onClose as (...a: unknown[]) => void).call(this, connection, code, reason, wasClean)
+  }
 
   async onMessage(connection: Connection, data: WSMessage): Promise<void> {
     if (typeof data === "string" && this.isDevice(connection)) {

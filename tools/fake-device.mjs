@@ -20,6 +20,22 @@
 //     --type T      what board to claim to be (default poem1)
 //     --screen WxH  what display to claim (default 960x540)
 //     --hold N      stay connected N seconds instead of exiting on the verdict
+//     --stall MS    BLOCK the event loop for MS after identifying
+//     --slow-identify MS   wait MS before answering the challenge
+//     --chatty MS   emit an app event every MS while holding
+//
+// ── WHY IT NEEDS TO BE ABLE TO BE BUSY ───────────────────────────────────────
+// Both bugs found on 2026-08-05 required a device that was doing something else
+// at the same time, and neither showed up in a suite that only ever pushes to an
+// IDLE device. A real Poem/1 runs Lua at 10Hz on the same loop that services its
+// WebSocket, and an e-ink refresh blocks that loop for around a second.
+//
+// --stall reproduces exactly that: a synchronous busy-wait blocks Node's event
+// loop, so pings go unanswered and frames go unread, which is what a blocking
+// panel refresh does to the firmware. --slow-identify does the same to the
+// handshake specifically. Being able to make the simulator LATE is what turns
+// "how long can a device block before the hub gives up?" from a guess into a
+// measurement.
 //
 // The --type/--screen flags are what make this a network simulator rather than
 // a single test double: a hub's whole point is carrying DIFFERENT hardware, and
@@ -34,11 +50,20 @@ const flagVal = (name, fallback) => {
   const i = flags.indexOf(name)
   return i === -1 ? fallback : flags[i + 1]
 }
+const stallMs = Number(flagVal("--stall", "0"))
+const slowIdentifyMs = Number(flagVal("--slow-identify", "0"))
+const chattyMs = Number(flagVal("--chatty", "0"))
 const devType = flagVal("--type", "poem1")
 const [scrW, scrH] = flagVal("--screen", "960x540").split("x").map(Number)
 const hold = Number(flagVal("--hold", "0"))
 
 const b64 = (buf) => Buffer.from(buf).toString("base64")
+
+/** Block the event loop, the way a blocking panel refresh blocks the firmware's. */
+const blockFor = (ms) => {
+  const until = Date.now() + ms
+  while (Date.now() < until) { /* deliberately spinning */ }
+}
 
 // Persisted like the firmware's NVS would: a device that regenerates its key
 // every boot could never be recognised on reconnect, so the test rig must not
@@ -76,6 +101,13 @@ ws.onmessage = async (ev) => {
     console.log("challenged")
     if (noKey) return console.log("(offering no key — legacy device)")
 
+    // Synchronous on purpose: a timer would let the event loop keep running,
+    // which is precisely what a blocked firmware loop does NOT do.
+    if (slowIdentifyMs > 0) {
+      console.log(`stalling ${slowIdentifyMs}ms BEFORE answering (blocking)`)
+      blockFor(slowIdentifyMs)
+    }
+
     const sig = await crypto.subtle.sign(
       { name: "ECDSA", hash: "SHA-256" },
       pair.privateKey,
@@ -104,6 +136,19 @@ ws.onmessage = async (ev) => {
   }
 
   if (msg.type === "identified") {
+    if (stallMs > 0) {
+      console.log(`stalling ${stallMs}ms AFTER identifying (blocking, like an e-ink refresh)`)
+      blockFor(stallMs)
+      console.log(`stall over; socket ${ws.readyState === 1 ? "still open" : "CLOSED during stall"}`)
+    }
+    if (chattyMs > 0) {
+      // A running app emitting events — the other half of "busy".
+      setInterval(() => {
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({ channel: "app", type: "sim_tick", data: { t: Date.now() } }))
+        }
+      }, chattyMs)
+    }
     const line = `RESULT state=${msg.state}${msg.fingerprint ? ` fingerprint=${msg.fingerprint}` : ""}`
     if (hold > 0) {
       console.log(`${line} (holding ${hold}s)`)
