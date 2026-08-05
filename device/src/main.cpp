@@ -213,8 +213,12 @@ static void handleIdentify(JsonDocument& doc) {
     const char* challenge = doc["challenge"] | "";
     if (!challenge[0]) return;
 
+    // Timed on purpose. This runs inside the WebSocket message callback, so
+    // whatever it costs is time the socket is not being serviced — the first
+    // version of this spent it three times over and we had no number for it.
+    uint32_t t0 = millis();
     String sig = DeviceIdentity::sign(challenge);
-    String pub = DeviceIdentity::publicKeyBase64();
+    String pub = DeviceIdentity::publicKeyBase64();  // cached; free after warm()
     if (sig.isEmpty() || pub.isEmpty()) {
         Serial.println("[identity] FAILED to sign the challenge");
         return;
@@ -232,7 +236,8 @@ static void handleIdentify(JsonDocument& doc) {
     screen["colors"] = 2;  // 1-bit e-ink
     sandbox.sendSystem(reply);
 
-    Serial.printf("[identity] answered challenge, fingerprint %s\n",
+    Serial.printf("[identity] answered challenge in %lums, fingerprint %s\n",
+                  (unsigned long)(millis() - t0),
                   DeviceIdentity::fingerprint().c_str());
 }
 
@@ -252,6 +257,12 @@ void setup() {
     }
     Serial.printf("[hub] %s (%s)\n", g_activeHost,
                   g_usingStoredHub ? "stored" : "default");
+
+    // Derive the identity key NOW, before sandbox.setup() opens the socket.
+    // Doing it here costs a one-off pause with nothing waiting on it; doing it
+    // lazily meant paying it inside the first challenge, competing with the
+    // very connection it was answering.
+    DeviceIdentity::warm();
 
     // Override the default /agents/<type>-agent/<deviceId> path with the
     // canonical /devices/<deviceId> path the Resident relay protocol uses.

@@ -137,8 +137,22 @@ inline bool loadKeypair(mbedtls_ecp_keypair& kp, mbedtls_ctr_drbg_context& drbg)
     return ok;
 }
 
+// ── Cached, because deriving is expensive ────────────────────────────────────
+// Every derivation costs an entropy seeding plus a P-256 point multiplication
+// (Q = d*G), and the first version of handleIdentify() did that THREE times per
+// challenge — once to sign, once for the public key, once more inside the
+// fingerprint. All of it synchronous, inside the WebSocket message callback,
+// on a device whose main loop also has to service the socket it is answering
+// on.
+//
+// The public key and fingerprint are pure functions of a key that never
+// changes, so they are computed once and kept. A challenge then costs exactly
+// one signature, which is the irreducible part.
+static String g_pubCache;
+static String g_fpCache;
+
 /** Base64 of the uncompressed public point, as the hub's WebCrypto expects. */
-inline String publicKeyBase64() {
+inline String derivePublicKeyBase64() {
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context drbg;
     if (!seedDrbg(drbg, entropy)) return String();
@@ -158,6 +172,12 @@ inline String publicKeyBase64() {
     mbedtls_ctr_drbg_free(&drbg);
     mbedtls_entropy_free(&entropy);
     return out;
+}
+
+/** Cached public key; derives on first call. Safe to call from a hot path. */
+inline String publicKeyBase64() {
+    if (g_pubCache.isEmpty()) g_pubCache = derivePublicKeyBase64();
+    return g_pubCache;
 }
 
 /**
@@ -209,6 +229,7 @@ inline String sign(const char* challenge) {
  * none: it would fail comparison every time and train the owner to ignore it.
  */
 inline String fingerprint() {
+    if (!g_fpCache.isEmpty()) return g_fpCache;
     String pub = publicKeyBase64();
     if (pub.isEmpty()) return String();
 
@@ -223,7 +244,23 @@ inline String fingerprint() {
 
     char hex[7];
     snprintf(hex, sizeof(hex), "%02x%02x%02x", digest[0], digest[1], digest[2]);
-    return String(hex);
+    g_fpCache = String(hex);
+    return g_fpCache;
+}
+
+/**
+ * Warm the caches before the network is up.
+ *
+ * Called from setup() so the expensive derivation happens once, while nothing
+ * is waiting on it — rather than inside the first challenge, where it competes
+ * with the very socket it is trying to answer.
+ */
+inline void warm() {
+    uint32_t t0 = millis();
+    publicKeyBase64();
+    fingerprint();
+    Serial.printf("[identity] key ready, fingerprint %s (%lums)\n",
+                  g_fpCache.c_str(), (unsigned long)(millis() - t0));
 }
 
 }  // namespace DeviceIdentity

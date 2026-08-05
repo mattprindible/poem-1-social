@@ -52,7 +52,19 @@ interface ConnState {
   challenge?: string
   verified?: boolean
   fingerprint?: string
+  /** Frames received before the handshake finished. See holdUntilProved(). */
+  pending?: string[]
 }
+
+/**
+ * How many frames to hold from a connection that has not proved itself yet.
+ *
+ * Small on purpose. This is a buffer for the ordinary race — the device speaks
+ * the instant it connects, before the challenge round-trip completes — not a
+ * queue. Anything that can open a socket can fill it, so it must never be big
+ * enough to be worth filling.
+ */
+const MAX_PENDING = 4
 
 /** Ring size. Bounded because a chatty app could otherwise fill the DO. */
 const MAX_EVENTS = 200
@@ -154,7 +166,10 @@ export class DeviceAgent extends RelayAgent<Env> {
       // A device with a key on file speaks only through a proved connection.
       // Otherwise anyone holding the id could write the owner's event log —
       // the log being the thing the owner reads to decide the device is fine.
-      if (!(await this.speaksForDevice(connection))) return
+      if (!(await this.speaksForDevice(connection))) {
+        this.holdUntilProved(connection, data)
+        return
+      }
       this.record(data)
     }
     // Then the canonical behaviour, unchanged. Ours is additive: if upstream
@@ -209,6 +224,28 @@ export class DeviceAgent extends RelayAgent<Env> {
     return new Response("OK", { status: 200 })
   }
 
+  /**
+   * Hold a frame from a connection that has not proved itself yet.
+   *
+   * THE BUG THIS FIXES: the device sends `hello` from onConnected — the instant
+   * the socket opens, before the hub's challenge has even arrived. That frame
+   * therefore lands on an unverified connection and used to be DROPPED, which
+   * silently destroyed the one signal set-hub.sh relies on to confirm a switch.
+   * The gate meant to stop unverified sockets speaking for the device ended up
+   * silencing the device itself.
+   *
+   * Dropping was also simply wrong. A connection that goes on to prove itself
+   * has earned attribution for what it already said — the frames were the
+   * device's all along; the hub just had not finished checking yet. Holding a
+   * few and flushing them on success is the honest version of the same rule.
+   */
+  private holdUntilProved(connection: Connection, raw: string): void {
+    const state = (connection.state as ConnState | null) ?? {}
+    const pending = state.pending ?? []
+    if (pending.length >= MAX_PENDING) return // never grows; see MAX_PENDING
+    connection.setState({ ...state, pending: [...pending, raw] })
+  }
+
   private async handleAuth(connection: Connection, raw: string): Promise<boolean> {
     let msg: { channel?: unknown; type?: unknown; pubkey?: unknown; sig?: unknown; device?: unknown }
     try {
@@ -255,11 +292,19 @@ export class DeviceAgent extends RelayAgent<Env> {
       await closePairWindow(this.env)
     }
 
+    const prior = (connection.state as ConnState | null) ?? {}
+    const proved = verdict.state !== "legacy"
     connection.setState({
       challenge: undefined,
-      verified: verdict.state !== "legacy",
-      ...(verdict.state === "legacy" ? {} : { fingerprint: verdict.fingerprint }),
+      verified: proved,
+      pending: undefined,
+      ...(proved ? { fingerprint: verdict.fingerprint } : {}),
     })
+
+    // Now that the connection has proved itself, everything it said while we
+    // were still checking is retroactively the device's word. Recorded in
+    // arrival order, before the frames that follow.
+    if (proved) for (const held of prior.pending ?? []) this.record(held)
 
     // Whatever the device says about itself rides on the auth frame, so it is
     // only ever recorded once identity has been proved. An unverified device's
