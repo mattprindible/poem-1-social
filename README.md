@@ -85,9 +85,10 @@ Apps in [`device-apps/`](device-apps/): `minute-clock`, `battery-watch`,
 `hello-status`, `first-light`, `hw-survey`, `nightfall` (a still night scene,
 drawn once and left alone — the calmest thing to leave on the panel), `standby`,
 `phone-home` (reports back to the hub — see [Hearing the device](#hearing-the-device)),
-plus two test fixtures — `runaway` (misbehaves deliberately, to exercise the
-escape hatch) and `federated-hello` (renders who pushed it, used by
-[`test-federation.sh`](test-federation.sh)).
+plus three test fixtures — `runaway` (misbehaves deliberately, to exercise the
+escape hatch), `wont-compile` (fails deliberately, to exercise the error
+channel; safe to push — it never draws) and `federated-hello` (renders who
+pushed it, used by [`test-federation.sh`](test-federation.sh)).
 
 > [!TIP]
 > **Hold the button for ~3 seconds to stop whatever is running** and forget it,
@@ -147,8 +148,27 @@ Prefer `lastEventAt` to `deviceConnected` as proof of life. Durable Objects keep
 hibernating WebSockets from old boots, so the connection count can report a
 device that left hours ago; a recorded event cannot.
 
-The emit side was in the firmware all along — this needed a hub change only, no
-reflash. See [`server/src/device-agent.ts`](server/src/device-agent.ts).
+The app-event side needed no reflash — `events.send` was in the firmware all
+along and only the hub had to listen. See
+[`server/src/device-agent.ts`](server/src/device-agent.ts).
+
+**Errors come back on the same path.** The firmware forwards the runtime's own
+telemetry, so a pushed app that fails no longer fails silently:
+
+```sh
+./send-app.sh device-apps/wont-compile.lua   # a fixture that is meant to fail
+```
+
+```json
+{ "type": "telemetry", "generationId": "d181", "name": "compile_error",
+  "data": { "error": "[string \"…\"]:25: unfinished string near …" } }
+```
+
+Names are `app_received`, `app_compiled`, `compile_error`, `runtime_error`,
+`log_error`, `app_restored`, and are lifted into the `name` field so errors are
+greppable. This half *does* require the firmware — telemetry comes from the
+runtime, not from Lua — so a device on older firmware still reports app events
+and simply stays quiet about errors.
 
 ## The social layer
 

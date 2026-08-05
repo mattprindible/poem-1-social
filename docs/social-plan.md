@@ -233,10 +233,29 @@ at once. Cache aggressively; treat the graph as advisory state, not live truth.
    air, and `hello` / `heartbeat` / `button` frames read back out of the hub with
    the device's own `from`, `nonce` and local clock on them.
 
-   *Still open:* this is a **read surface, not yet a feedback channel.** The
-   thing that would pay for itself next is the firmware reporting compile and
-   runtime errors the same way, so a pushed app that fails to load stops failing
-   silently — today that still needs a USB cable. That one *does* need a reflash.
+   **Errors now come back too (2026-08-04, same branch).** `main.cpp` wires
+   `setTelemetryCallback` straight to `ws().sendText`, so the runtime's own
+   `compile_error` / `runtime_error` / `log_error` reach the hub verbatim. This
+   half *did* need a reflash — telemetry is emitted by the runtime, not by Lua,
+   so no app could ever have forwarded it.
+
+   That closes a genuinely bad loop: a pushed app that failed to compile used to
+   be indistinguishable from one that worked. The push returned 200 (the relay
+   delivered it — that is all it ever promised), the panel kept showing the
+   previous app, and the reason lived only on a serial port. Untenable once apps
+   arrive from other people, since the sender has no cable and the recipient has
+   no reason to hold one.
+
+   Verified with `device-apps/wont-compile.lua`: the Lua message arrives intact,
+   with a line number — `:25: unfinished string near ''this string never
+   closes'` — as does a runtime fault from `init` (`:4: attempt to index a nil
+   value (local 'x')`).
+
+   Forwarded verbatim rather than re-wrapped, and deliberately NOT routed
+   through `publishEvent`: that shares a 5/s token bucket with the app's own
+   `events.send`, so an app erroring in a loop would spend the budget it needs
+   to report anything else. Errors must not be the thing that silences the error
+   channel.
 
    It also gives `set-hub.sh` the answer it never had. It currently infers a hub
    switch from the destination's connection count, which is best-effort —

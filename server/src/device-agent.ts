@@ -45,6 +45,9 @@ export interface DeviceEvent extends Record<string, SqlStorageValue> {
   at: number
   channel: string | null
   type: string | null
+  /** Runtime telemetry's own discriminator: `compile_error`, `runtime_error`,
+   *  `app_compiled`, … Null for app events, whose `type` is already the name. */
+  name: string | null
   body: string
 }
 
@@ -59,9 +62,23 @@ export class DeviceAgent extends RelayAgent<Env> {
          at      INTEGER NOT NULL,
          channel TEXT,
          type    TEXT,
+         name    TEXT,
          body    TEXT NOT NULL
        )`,
     )
+
+    // `name` arrived after the table did, and CREATE TABLE IF NOT EXISTS is a
+    // no-op on an existing one — so a hub that recorded anything before
+    // telemetry forwarding has the old shape and would throw on every insert.
+    // Reconciling here (rather than dropping the table) keeps whatever the
+    // device has already reported, which is the point of storing it.
+    const columns = this.ctx.storage.sql
+      .exec<Record<string, SqlStorageValue>>("PRAGMA table_info(device_events)")
+      .toArray()
+    if (!columns.some((c) => c.name === "name")) {
+      this.ctx.storage.sql.exec("ALTER TABLE device_events ADD COLUMN name TEXT")
+    }
+
     this.tableReady = true
   }
 
@@ -99,10 +116,19 @@ export class DeviceAgent extends RelayAgent<Env> {
     // would silently lose whatever upstream adds next.
     let channel: string | null = null
     let type: string | null = null
+    let name: string | null = null
     try {
-      const parsed = JSON.parse(raw) as { channel?: unknown; type?: unknown }
+      const parsed = JSON.parse(raw) as {
+        channel?: unknown
+        type?: unknown
+        name?: unknown
+      }
       if (typeof parsed.channel === "string") channel = parsed.channel
       if (typeof parsed.type === "string") type = parsed.type
+      // Runtime telemetry is all one `type`, so without this every compile
+      // error and every successful load would look alike in the column that
+      // exists to tell them apart.
+      if (typeof parsed.name === "string") name = parsed.name
     } catch {
       // Not JSON. Store it anyway — a malformed frame is exactly the kind of
       // thing you want to SEE when a device is misbehaving, and discarding it
@@ -110,10 +136,11 @@ export class DeviceAgent extends RelayAgent<Env> {
     }
 
     this.ctx.storage.sql.exec(
-      "INSERT INTO device_events (at, channel, type, body) VALUES (?, ?, ?, ?)",
+      "INSERT INTO device_events (at, channel, type, name, body) VALUES (?, ?, ?, ?, ?)",
       Date.now(),
       channel,
       type,
+      name,
       raw.length > MAX_BODY ? raw.slice(0, MAX_BODY) : raw,
     )
 
@@ -141,7 +168,7 @@ export class DeviceAgent extends RelayAgent<Env> {
     const capped = Math.max(1, Math.min(Math.trunc(limit) || 1, MAX_EVENTS))
     const rows = this.ctx.storage.sql
       .exec<DeviceEvent>(
-        "SELECT seq, at, channel, type, body FROM device_events ORDER BY seq DESC LIMIT ?",
+        "SELECT seq, at, channel, type, name, body FROM device_events ORDER BY seq DESC LIMIT ?",
         capped,
       )
       .toArray()

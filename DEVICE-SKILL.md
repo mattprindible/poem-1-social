@@ -132,6 +132,19 @@ curl -H "Authorization: Bearer $HUB_ADMIN_TOKEN" https://<your-hub>/hub/device/e
 
 See `device-apps/phone-home.lua` for a working example.
 
+**Errors report themselves** — you do not need to catch anything. The firmware
+forwards the runtime's telemetry to the same endpoint, so a compile or runtime
+failure shows up there with the Lua message and line number, rather than only on
+the serial console:
+
+```json
+{ "name": "compile_error", "data": { "error": "[string \"…\"]:25: unfinished string near …" } }
+```
+
+Also emitted: `app_received`, `app_compiled`, `runtime_error`, `log_error`
+(from `log.error(msg)`), `app_restored`. `on_tick` errors are rate-limited at
+the source; `init` and `on_event` errors go out immediately.
+
 ## App lifecycle
 
 ```lua

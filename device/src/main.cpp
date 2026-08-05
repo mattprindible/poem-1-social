@@ -236,6 +236,40 @@ void setup() {
     sandbox.onMessageWithChannel("system", handleControl);  // channel:"system"
     sandbox.onMessage(handleControl);                       // legacy, un-channelled
 
+    // ── Error reporting ──────────────────────────────────────────────────
+    // Forward the sandbox's telemetry to the hub, which records it and serves
+    // it at /hub/device/events. This is the half that needed a reflash: the
+    // data-plane return path (events.send) has always been in stock Resident
+    // and only needed the hub to listen, but telemetry is emitted by the
+    // RUNTIME rather than by Lua, so nothing in an app could ever forward it.
+    //
+    // What it buys: a pushed app that fails to COMPILE used to fail silently.
+    // The hub's push returned 200 (it delivered fine — the relay's job ended
+    // there), the panel kept showing whatever was on it, and the only way to
+    // learn why was a USB cable. That is a bad enough loop when the app is
+    // yours; it is untenable once apps arrive from other people, because the
+    // sender has no cable and the recipient has no reason to hold one.
+    //
+    // Verbatim rather than re-wrapped: the envelope is upstream's
+    // ({type:"telemetry", generationId, name, data}), and translating it here
+    // would invent a dialect this project would then have to keep in step with
+    // Resident. The hub lifts `name` into its own column and keeps the raw
+    // frame, so new telemetry names show up without a firmware change.
+    //
+    // Not routed through publishEvent deliberately: that shares a 5/s token
+    // bucket with the app's own events.send, so an app erroring in a loop would
+    // spend the budget it needs to report anything else. Errors must not be the
+    // thing that silences the error channel. Upstream already rate-limits
+    // on_tick errors at the source, which is the right place for it.
+    //
+    // sendText returns false when the socket is down (e.g. app_restored fires
+    // during setup(), pre-WiFi). Dropping those is correct — this is a report,
+    // not a queue, and a boot-time buffer would be a way to lose the panel to
+    // a retry storm rather than a way to learn anything.
+    sandbox.setTelemetryCallback([](const char* json) {
+        sandbox.ws().sendText(json);
+    });
+
     sandbox.onConnected([]() {
         g_everConnected = true;
         Serial.printf("[resident] connected, device id: %s\n", sandbox.getDeviceId().c_str());
