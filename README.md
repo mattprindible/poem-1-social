@@ -148,6 +148,13 @@ Prefer `lastEventAt` to `deviceConnected` as proof of life. Durable Objects keep
 hibernating WebSockets from old boots, so the connection count can report a
 device that left hours ago; a recorded event cannot.
 
+On every connect the device announces itself and names the hub it thinks it
+reached — `{"type":"hello","host":"…","stored":true,"fellback":false}`. That is
+what `set-hub.sh` now waits for, so a hub switch is confirmed by the device
+rather than inferred from a connection count. When it can't (no owner token for
+the destination, or a destination not running this hub's code — the public relay,
+say) it falls back to counting and says so.
+
 The app-event side needed no reflash — `events.send` was in the firmware all
 along and only the hub had to listen. See
 [`server/src/device-agent.ts`](server/src/device-agent.ts).

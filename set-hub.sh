@@ -12,18 +12,27 @@
 # (flag, then env var, then dotfile). On success this updates .resident-hub-url
 # so subsequent send-app.sh pushes follow the device to its new home.
 #
-# Because the device has no way to report back yet (DeviceAgent.onMessage is a
-# no-op upstream — see docs/social-plan.md), success is confirmed the only way
-# available from here: by watching the DESTINATION hub's connection count and
-# waiting for it to RISE.
+# Success is confirmed by the DEVICE'S OWN WORD where that is possible.
 #
-# It counts the rise, not merely a non-zero count, because Durable Objects hold
-# on to hibernating WebSockets from previous boots — a hub the device left hours
-# ago can still report "connections: 1". Checking for non-zero produced a
-# confident false positive while the device was in fact somewhere else entirely.
-# Comparing against a pre-send baseline is still best-effort, not proof: it can
-# report failure if a stale entry is reaped at the same moment the device
-# arrives. Serial, or the device's own screen, remains the ground truth.
+# On every (re)connect the firmware sends {"type":"hello","host":…} naming the
+# hub it believes it reached. A hello that arrives AT the destination and NAMES
+# the destination is proof: the device is the only party that knows where it
+# actually landed, and a stale hello from a previous hub names the previous hub,
+# so it cannot be mistaken for a fresh arrival. We read it from the destination's
+# /hub/device/events, and compare against a pre-send `seq` rather than a clock,
+# so nothing depends on this machine and Cloudflare agreeing about the time.
+#
+# That needs an owner token for the DESTINATION hub, and a destination that runs
+# this project's hub code. Neither holds when moving to the public relay, or to
+# a hub you don't own, so the old heuristic remains as a FALLBACK: watch the
+# destination's connection count and wait for it to RISE.
+#
+# The fallback is weaker and the script says so when it uses it. It waits for a
+# rise rather than a non-zero count because Durable Objects hold on to
+# hibernating WebSockets from previous boots — a hub the device left hours ago
+# can still report "connections: 1", which produced a confident false positive
+# during testing. A baseline narrows that without closing it: a stale entry
+# reaped just as the device arrives still reads as failure.
 #
 # Requires: curl, jq.
 
@@ -129,11 +138,58 @@ hub_conn_count() {
     | sed -n 's/^connections: \([0-9][0-9]*\).*/\1/p' | head -1
 }
 
-# Baseline BEFORE the switch, so we can wait for a rise rather than trust a
-# non-zero count (which may just be a hibernating connection from a past boot).
-baseline=$(hub_conn_count "$target_url")
-baseline=${baseline:-0}
-echo "Destination currently reports $baseline connection(s); waiting for that to rise." >&2
+# An owner token for a destination hub, if this machine has one. Same convention
+# as test-federation.sh: keychain service "poem1-hub-admin", account = the
+# worker name, which is the first label of the hostname.
+token_for_hub() {
+  local host="$1" token
+  token="${HUB_ADMIN_TOKEN:-}"
+  if [[ -z "$token" ]] && command -v security >/dev/null 2>&1; then
+    token=$(security find-generic-password -a "${host%%.*}" \
+      -s "poem1-hub-admin" -w 2>/dev/null || true)
+  fi
+  printf '%s' "$token"
+}
+
+# Highest recorded event seq at a hub. Empty (not 0) when the endpoint can't be
+# used at all — no token, not our hub code, or no device configured there — which
+# is what selects the fallback below. Empty and 0 mean different things here.
+hub_latest_seq() {
+  local url="$1" token="$2"
+  [[ -z "$token" ]] && return 0
+  curl -sS -m 8 -H "Authorization: Bearer $token" \
+    "$url/hub/device/events?limit=1" 2>/dev/null \
+    | jq -r 'if .events then ((.events[0].seq) // 0) else empty end' 2>/dev/null
+}
+
+# The host named by the first hello recorded after $2. Empty if there isn't one.
+hub_hello_host_after() {
+  local url="$1" since="$2" token="$3"
+  curl -sS -m 8 -H "Authorization: Bearer $token" \
+    "$url/hub/device/events?limit=25" 2>/dev/null \
+    | jq -r --argjson s "$since" '
+        (.events // [])
+        | map(select(.seq > $s and .type == "hello"))
+        | map(.body | fromjson | .host // empty)
+        | .[0] // empty' 2>/dev/null
+}
+
+# Prefer the device's own report; fall back to counting connections.
+dest_token=$(token_for_hub "$target_host")
+baseline_seq=$(hub_latest_seq "$target_url" "$dest_token")
+
+if [[ -n "$baseline_seq" ]]; then
+  confirm_mode="hello"
+  echo "Confirming by the device's own hello at $target_host (seq > $baseline_seq)." >&2
+else
+  confirm_mode="count"
+  baseline=$(hub_conn_count "$target_url")
+  baseline=${baseline:-0}
+  echo "No owner token for $target_host (or it isn't running this hub's code)." >&2
+  echo "Falling back to connection counts: currently $baseline, waiting for a rise." >&2
+  echo "  NOTE: weaker than the device's own report — hibernating sockets can" >&2
+  echo "  make a departed device still look present. Confirm on the panel." >&2
+fi
 
 http_code=$(curl -sS -o /dev/null -w "%{http_code}" \
   -X POST -H "Content-Type: application/json" \
@@ -147,21 +203,43 @@ case "$http_code" in
   *)   echo "set-hub: HTTP $http_code from $base_url" >&2; exit 3 ;;
 esac
 
-# Confirm by watching the destination, since the device cannot ack.
+# Record the move locally. Only ever called once arrival is confirmed, so a
+# failed switch never leaves send-app.sh pointing somewhere the device isn't.
+record_move() {
+  if [[ "$do_clear" -eq 1 ]]; then
+    rm -f .resident-hub-url
+    echo "Removed .resident-hub-url; pushes now default to the public relay." >&2
+  else
+    printf '%s\n' "$target_url" > .resident-hub-url
+    echo "Wrote .resident-hub-url — send-app.sh will follow it there." >&2
+  fi
+}
+
 deadline=$(( $(date +%s) + CONNECT_TIMEOUT_SECS ))
 while [[ $(date +%s) -lt $deadline ]]; do
-  now_count=$(hub_conn_count "$target_url")
-  now_count=${now_count:-0}
-  if [[ "$now_count" -gt "$baseline" ]]; then
-    echo "Device appeared on ${target_host} (connections ${baseline} -> ${now_count})." >&2
-    if [[ "$do_clear" -eq 1 ]]; then
-      rm -f .resident-hub-url
-      echo "Removed .resident-hub-url; pushes now default to the public relay." >&2
-    else
-      printf '%s\n' "$target_url" > .resident-hub-url
-      echo "Wrote .resident-hub-url — send-app.sh will follow it there." >&2
+  if [[ "$confirm_mode" == "hello" ]]; then
+    said=$(hub_hello_host_after "$target_url" "$baseline_seq" "$dest_token")
+    if [[ -n "$said" ]]; then
+      if [[ "$said" == "$target_host" ]]; then
+        echo "Device announced itself on ${target_host}, and named it: \"$said\"." >&2
+        record_move
+        exit 0
+      fi
+      # It arrived and reported a DIFFERENT hub than the one hosting this
+      # endpoint. Don't record the move on a report that disagrees with itself.
+      echo "set-hub: device connected to ${target_host} but reported host \"$said\"." >&2
+      echo "  Refusing to record the move — that disagreement needs a look." >&2
+      exit 1
     fi
-    exit 0
+  else
+    now_count=$(hub_conn_count "$target_url")
+    now_count=${now_count:-0}
+    if [[ "$now_count" -gt "$baseline" ]]; then
+      echo "Device appeared on ${target_host} (connections ${baseline} -> ${now_count})." >&2
+      echo "  (Inferred from connection counts, not the device's own word.)" >&2
+      record_move
+      exit 0
+    fi
   fi
   sleep 3
 done

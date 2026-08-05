@@ -257,12 +257,23 @@ at once. Cache aggressively; treat the graph as advisory state, not live truth.
    to report anything else. Errors must not be the thing that silences the error
    channel.
 
-   It also gives `set-hub.sh` the answer it never had. It currently infers a hub
-   switch from the destination's connection count, which is best-effort —
-   hibernating WebSockets from old boots mean a hub the device left hours ago
-   still reports connections, and a naive non-zero check produced a confident
-   false positive during testing. `lastEventAt` is a timestamp the device caused;
-   a count is not. Rewiring `set-hub.sh` onto it is not done yet.
+   **`set-hub.sh` now confirms by the device's own word.** This needed one more
+   firmware change than expected: nothing was sent on connect, so there was
+   nothing to observe after a switch — a hub reconnect doesn't reboot, so no
+   boot telemetry fires either. `onConnected` now sends
+   `{"type":"hello","host":…}` naming the hub the device believes it reached, via
+   `sendSystem` (control plane — it must not spend the app's 5/s event budget).
+
+   A hello that arrives AT the destination and NAMES the destination is proof in
+   a way no count is: the device is the only party that knows where it landed,
+   and a stale hello from a previous hub names the previous hub, so it can't be
+   mistaken for a fresh arrival. Compared against a pre-send `seq` rather than a
+   clock, so it doesn't depend on this machine and Cloudflare agreeing on time.
+
+   The count heuristic survives as a **fallback**, because the proof needs an
+   owner token for the destination and a destination running this hub's code —
+   neither true when moving to the public relay or to a hub you don't own. The
+   script says which one it used; the fallback prints its own caveat.
 
 ## The real bottleneck
 

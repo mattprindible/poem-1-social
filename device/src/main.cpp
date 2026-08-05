@@ -273,6 +273,39 @@ void setup() {
     sandbox.onConnected([]() {
         g_everConnected = true;
         Serial.printf("[resident] connected, device id: %s\n", sandbox.getDeviceId().c_str());
+
+        // Announce ourselves, and say WHICH HUB we think we're on.
+        //
+        // Nothing was sent on connect before this, which quietly defeated the
+        // point of the return path for the one question it was best placed to
+        // answer. set-hub.sh had to infer a successful switch from the
+        // destination's connection COUNT, because the device never said
+        // anything; but Durable Objects keep hibernating WebSockets from old
+        // boots, so a hub the device left hours ago still reports connections.
+        // That produced a confident false positive during testing. Waiting for
+        // the count to RISE from a baseline narrowed it without fixing it — a
+        // stale entry reaped at the wrong moment still reads as failure.
+        //
+        // `host` is the field that ends the guessing: the device is the only
+        // party that knows which hub it actually reached, and a hello arriving
+        // AT a hub that names that same hub is proof no count can offer. It is
+        // also self-verifying — a stale hello from a previous hub names the
+        // previous hub, so it cannot be mistaken for a fresh arrival.
+        //
+        // sendSystem, not publishEvent: this is control plane, and it must not
+        // draw on the 5/s token bucket the Lua app's events.send spends. A
+        // device reconnecting is exactly when an app may also be chattiest, and
+        // the announcement is the message you least want dropped.
+        //
+        // Fires on EVERY (re)connect, not just the first — a set_hub switch
+        // reconnects without rebooting, which is precisely the case that needs
+        // confirming.
+        JsonDocument hello;
+        hello["type"] = "hello";
+        hello["host"] = g_activeHost;
+        hello["stored"] = g_usingStoredHub;
+        hello["fellback"] = g_fellBackToDefault;
+        sandbox.sendSystem(hello);
         // Timezone lookup needs the network up, so it lives here rather than
         // in SandboxConfig (whose configure() runs pre-WiFi). Guarded so
         // reconnects don't re-query. Uses stock Resident's IANA lookup (ezTime
