@@ -247,9 +247,30 @@ Firmware `hello` carries `deviceType`; the hub records it per claimed device; th
 app record gains a target field; pushes to a mismatched device warn or refuse.
 **Needs a reflash** — batch accordingly.
 
-### 5. Verbiage
+### 5. Verbiage — DONE 2026-08-05
 
-Cheap, mechanical, do alongside whatever else is open:
+Headers, cookie, `client_name`, page title and every worker name are changed;
+each worker is now named for the identity that owns it.
+
+Sweeping for leftovers afterwards was worth doing — it turned up a **stale NSID
+in `apps.sh`'s own help text**, still telling people to write
+`at://…/is.mfd.poem1.app/…`. Docs that describe an interface rot exactly like
+code, and nothing type-checks a comment.
+
+What deliberately still says `poem1`, and why:
+
+- **`poem1-hub-admin`, the keychain SERVICE name.** Renaming it would orphan
+  every token already stored on this machine, and Cloudflare secrets are
+  write-only — so the tokens could not be re-derived, only regenerated across
+  every hub. A cosmetic rename is not worth that. The *account* within the
+  service is the worker name, which is where the real identity lives.
+- **`sync.sh` and the firmware.** That script really is Poem/1-specific: it
+  pins a MAC, guards a panel, and builds one board's binary. Naming it
+  accurately is correct, not leftover.
+- **Prose naming the board or the sandbox library.** Both are real things this
+  project depends on and should be called what they are. The rule was never to
+  scrub the words — it is that they must not appear in an NSID, a URL, or a wire
+  identifier.
 
 | Identifier | Where |
 |---|---|

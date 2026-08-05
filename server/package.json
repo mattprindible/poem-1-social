@@ -2,7 +2,7 @@
   "name": "mfd-hub",
   "version": "0.0.0",
   "private": true,
-  "description": "Poem/1 Social hub: the Resident relay for one person's device.",
+  "description": "A SAN hub: one owner's identity, devices, and app library.",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",

@@ -55,7 +55,7 @@
 # HUB_ADMIN_TOKEN exists, never its value. A token you did not record is gone.
 # So record it ONCE, in the keychain, instead of rotating it every run:
 #
-#   W=poem1-hub-haha
+#   W=idiot-hub
 #   TOKEN="$(openssl rand -hex 32)"
 #   security add-generic-password -a "$W" -s poem1-hub-admin -w "$TOKEN"
 #   printf '%s' "$TOKEN" | (cd server && npx wrangler secret put HUB_ADMIN_TOKEN --name "$W")

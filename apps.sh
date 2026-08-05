@@ -21,7 +21,7 @@
 #
 #   minute-clock                    in YOUR library
 #   alice.bsky.social/minute-clock  in THEIRS
-#   at://did:plc:…/is.mfd.poem1.app/minute-clock
+#   at://did:plc:…/computer.haha.san.app/minute-clock
 #
 # Reads need nothing. Writes (publish, delete) and pushes need an owner
 # credential for YOUR hub: $HUB_ADMIN_TOKEN, or the keychain entry that

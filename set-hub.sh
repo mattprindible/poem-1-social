@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# set-hub.sh — Point a Poem/1 at a different Resident hub, over the air.
+# set-hub.sh — Point a device at a different hub, over the air.
 #
 #   ./set-hub.sh my-hub.example.workers.dev   # move to that hub
 #   ./set-hub.sh --clear                      # back to the public relay
@@ -89,7 +89,7 @@ if [[ "$do_clear" -eq 0 ]]; then
   case "$new_host" in
     *://*|*/*|*" "*)
       echo "set-hub: '$new_host' must be a bare hostname — no scheme, no path." >&2
-      echo "  e.g. poem1-hub.example.workers.dev" >&2
+      echo "  e.g. my-hub.example.workers.dev" >&2
       exit 2 ;;
   esac
 fi
