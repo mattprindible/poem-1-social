@@ -91,6 +91,7 @@ printf '%s' "$TOKEN" | npx wrangler secret put HUB_ADMIN_TOKEN
 | `GET /federation/relationship/<who>` | are we mutuals |
 | `GET \| POST /hub/device` 🔒 | which device this hub relays to |
 | `GET /hub/device/events` 🔒 | what that device has **said back** — see below |
+| `POST /hub/device/app` 🔒 | load an app onto **your own** device |
 
 🔒 = owner only. Send `Authorization: Bearer $HUB_ADMIN_TOKEN`, or use the browser
 session cookie from `/oauth/login`. A session is checked against the **current**
@@ -102,10 +103,38 @@ the sender's signature, and gating it would make federation impossible. That
 distinction — *hub-to-hub* auth versus *owner* auth — is the one to keep straight
 when adding routes.
 
-`POST /federation/push` takes `{to, code}` plus an optional `force`, which skips
-**this** hub's advisory mutual check. It cannot grant access — the recipient
-enforces independently — so it exists to make that independence observable
-instead of masked by the local check.
+`POST /federation/push` takes `{to}` plus **either** `{code}` (raw Lua) or
+`{app}` (a reference into a published library — see below), and an optional
+`force`, which skips **this** hub's advisory mutual check. `force` cannot grant
+access — the recipient enforces independently — so it exists to make that
+independence observable instead of masked by the local check.
+
+An `{app}` reference is resolved to source **here, before signing**. The wire
+format between hubs stays frozen at `{type, code}`, so a peer running older code
+sees no difference. Keep it that way: peers run hubs we cannot update, and every
+field added to that envelope is one this project is committing to forever.
+
+### App records
+
+| Route | |
+|---|---|
+| `GET /apps` | list your library |
+| `GET /apps?repo=<who>` | list **theirs** — no credential at all |
+| `POST /apps` 🔒 | publish or update `{name, code, description?}` |
+| `GET /apps/<ref>` | one app, source included |
+| `DELETE /apps/<rkey>` 🔒 | unpublish (your repo only) |
+
+An app is a record in its author's own atproto repo, `is.mfd.poem1.app`, keyed
+by a slug derived from its name — so re-publishing a name is an **edit**, and the
+repo's history is the version history. A reference is `minute-clock` (yours),
+`alice.bsky.social/minute-clock` (hers), or a full `at://…` URI; the same grammar
+works in `/federation/push` and `/hub/device/app`.
+
+Reads are ungated on purpose. Repo records are public the moment they are
+published, so gating would protect nothing while breaking the property that
+matters: anyone can browse a builder's apps with no hub, no device and no
+account. Writes go through the owner's OAuth session, because the only repo this
+hub can write is its owner's.
 
 ### The device's return path
 
@@ -161,7 +190,14 @@ are not failures (an unconfigured hub should not look like a broken push path)
 but they are not passes either, and the suite used to exit 0 on a run that tested
 nothing at all.
 
-The positive case proves the machinery runs; the negative cases prove it says
+There are two positive cases. `mutual-push` sends raw Lua; `record-push`
+publishes an app to the sender's repo and pushes it **by reference**, then
+asserts the CID the sender reported is the one it published. That second case is
+also a guard on the wire format: it exercises app records against an *unchanged*
+recipient, so if it ever needs the receiving side updated to pass, records have
+leaked into the federation protocol.
+
+The positive cases prove the machinery runs; the negative cases prove it says
 no, which is the entire security claim. A hub that accepted everything would pass
 the positive test perfectly. The load-bearing case is `recipient-enforces`: it
 pushes from a non-mutual with `force`, so only the recipient's own answer
@@ -198,8 +234,11 @@ src/oauth.ts              client metadata + client key
 src/oauth-client.ts       @atproto/oauth-client wired for Workers
 src/oauth-routes.ts       login / callback / session / logout
 src/hub-key.ts            federation signing key
+src/pds.ts                XRPC to a PDS: authenticated (session) and public
 src/hub-record.ts         the hub record: read, publish, delete, discover
 src/hub-routes.ts         hub record + peer discovery routes
+src/app-record.ts         app records: publish, read, list, delete, ref parsing
+src/app-routes.ts         the app library, and the shared reference resolver
 src/federation.ts         signing, verification, mutual-follow checks
 src/federation-routes.ts  push and inbox
 scripts/gen-key.mjs       generate the OAuth client key (WebCrypto, no deps)

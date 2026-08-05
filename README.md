@@ -212,14 +212,53 @@ curl https://<your-hub>/hub/peer/someone.bsky.social
 That resolves handle → DID → PDS → their hub record, entirely from public
 infrastructure.
 
+### Apps are records too
+
+`send-app.sh` pushes a *file*. That is the right tool while you are iterating
+with the thing in front of you, but it has no idea what it sent — no name, no
+author, no version, no history. Fine for one person with a cable; useless the
+moment an app arrives from someone else and the only question worth asking is
+"what is this, and who wrote it".
+
+So an app can also be published into your own atproto repo, as a record:
+
+```sh
+./apps.sh publish device-apps/minute-clock.lua
+./apps.sh list                             # yours
+./apps.sh list alice.bsky.social           # theirs — no account, no index
+./apps.sh show alice.bsky.social/minute-clock
+./apps.sh run minute-clock                 # onto your own device
+./apps.sh push alice.bsky.social minute-clock
+```
+
+```
+at://<your-did>/is.mfd.poem1.app/minute-clock
+```
+
+Authorship, versioning, history and portability all come from atproto rather
+than from anything here: records are signed, the record key is derived from the
+name so re-publishing is an **edit** with a new CID, and the library outlives
+this hub and this project. It also collapses discovery into a read — finding
+someone's apps is listing a collection in their repo. There is no app store.
+
+Because that is pure atproto, **you can browse and publish before you own a hub
+or a Poem/1** — which is the main defence against a cold start.
+
+An app is named the same way everywhere: `minute-clock` in your library,
+`alice.bsky.social/minute-clock` in hers, or the full `at://…` URI.
+
 ### Pushing to someone else's device
 
 ```sh
 curl -X POST https://<your-hub>/federation/push \
   -H "Authorization: Bearer $HUB_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"to":"friend.bsky.social","code":"'"$(cat app.lua)"'"}'
+  -d '{"to":"friend.bsky.social","app":"minute-clock"}'
 ```
+
+`{"code": "<lua>"}` still works for something you have not published. Either way
+the **sender** resolves the app to source before signing, so the federation wire
+format is unchanged — a hub running older code cannot tell the two apart.
 
 Their hub accepts it only if **both** hold:
 
@@ -246,8 +285,9 @@ discovery, signing, verification, mutual check, delivery — and asserts on the
 It reads the sender's owner token from `$HUB_ADMIN_TOKEN` or the macOS keychain.
 Cloudflare secrets are write-only, so record the token once when you set it
 rather than rotating it every time you want to run this — the script's header has
-the exact commands. You do **not** need an OAuth browser session for this; that
-is only for claiming a hub and publishing its record.
+the exact commands. A token is enough for every case except `record-push`, which
+publishes into the sender's repo and so needs that hub's OAuth session to still
+be live; it skips rather than fails when the session has lapsed.
 
 Routes, deployment and the trust model in detail: [`server/README.md`](server/README.md).
 Why it is built this way: [`docs/social-plan.md`](docs/social-plan.md).

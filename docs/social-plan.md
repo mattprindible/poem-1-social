@@ -23,8 +23,15 @@ asymmetric follow is the relationship a sloppy graph check gets wrong, because
 `followedBy: true` looks like a connection. [`test-federation.sh`](../test-federation.sh)
 runs the whole thing — push and refusals — as one command.
 
-What does NOT exist yet: apps as records, weak-tie discovery, and any of the
-onboarding work.
+**Apps are records as of 2026-08-05.** An app is now published into its author's
+own repo as `is.mfd.poem1.app`, and the federation suite's `record-push` case
+proves the round trip: a record published to one account's repo, pushed to
+another account's device *by reference*, and compiled there — verified by the
+device's own telemetry, not by the relay's 200. Listing someone else's library
+is an unauthenticated read of their PDS, so discovery needs no hub and no
+account.
+
+What does NOT exist yet: weak-tie discovery, and any of the onboarding work.
 
 **Namespace note:** records use `is.mfd.poem1.*`, under a domain the hub owner
 controls. `tech.inanimate.*` would be the natural long-term home given Poem/1 and
@@ -116,10 +123,35 @@ PLC could support extra service entries eventually, but regular users can't edit
 their `did:plc` document directly today, and `did:web` would mean self-hosting
 identity. The repo record is available to everyone right now.
 
-## Apps are records too
+## Apps are records too — BUILT and verified 2026-08-05
 
 Apps are **durable artifacts, not throwaway pushes**. An app is an atproto record
 (`is.mfd.poem1.app`) holding the Lua source plus metadata.
+
+The record key is derived from the app's **name**, not a random TID. That is the
+decision the rest of this section rests on: re-publishing the same name is an
+*edit*, so the repo's own history is the app's version history, and an app is
+referable as `handle/name` with no lookup table. The cost is that renaming
+creates a new app and orphans the old key — correct, on balance, since the rkey
+is the app's identity.
+
+**References resolve sender-side, and that is the load-bearing constraint.**
+`/federation/push` takes `{app}` as well as `{code}`, but the sending hub turns
+the reference into Lua *before* it signs anything, so the wire format stays
+frozen at `{type, code}`. Peers run hubs we cannot update; every field added
+there is one we would be committing to support forever. A recipient on older hub
+code cannot tell a record push from a raw one, because there is no difference —
+and `record-push` in the suite exists to keep it that way. If that case ever
+needs the *recipient* changed to pass, app records have leaked into the
+federation protocol.
+
+Whether the recipient *should* learn what landed on their device — name, author,
+CID — is a real and separate question, tangled up with update semantics below.
+It is not settled, so it is not shipped.
+
+`apps.sh` is the CLI (`publish`, `list`, `show`, `info`, `run`, `push`,
+`delete`). `send-app.sh` is untouched and still the file-and-a-cable path: it
+needs no login, which is exactly why it stays.
 
 This gives, for free: authorship and provenance (records are signed), versioning
 and history (CIDs, rkeys, timestamps), updates as record updates, and portability
@@ -204,11 +236,23 @@ at once. Cache aggressively; treat the graph as advisory state, not live truth.
    until he chooses again. *Leaning: pin by default, surface updates as something
    you accept.* Not obvious — "your friend fixed a bug and your clock silently got
    better" is a genuinely nice property to give up.
+
+   *Still open, but no longer abstract:* records now have CIDs, and a push
+   resolves a reference at send time and reports the exact CID it sent (the
+   suite asserts that report matches what was published, so it is a trustworthy
+   input rather than a claim). What is missing is anywhere to PUT a pin. A
+   pinned app is state on the recipient's side, and nothing on the device or in
+   its hub currently remembers which version of whose app it is running. That is
+   the next piece of this decision, not another round of arguing the default.
 2. **Moderation / blocking.** Mutual-follow is a weak proxy for tie strength;
    people mutual-follow strangers. Revocation and per-person blocking need to be
    first-class, not an afterthought.
-3. **Local app identity.** `send-app.sh` is file-based and ephemeral — no name,
-   version, or author. Durable apps mean the daily loop has to change too.
+3. **Local app identity — SETTLED 2026-08-05.** `send-app.sh` was file-based and
+   ephemeral: no name, version, or author. The answer turned out not to be
+   changing it. `send-app.sh` keeps doing exactly what it did, because a path
+   that needs no login is worth having while you iterate with a cable; `apps.sh`
+   is the second loop, for apps that have a name and a home. Two loops, chosen
+   per task, rather than one loop made heavier for everybody.
 4. **Hosted hub for onboarding?** Running a hub others can point at lowers the
    entry cliff. Because identity is a DID and the endpoint is a record they
    control, self-hosting later is a record update, not a migration — so a hub is
