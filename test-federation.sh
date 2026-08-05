@@ -124,7 +124,7 @@ verbose=0
 
 # Every case name, so --only can reject a typo instead of matching nothing and
 # reporting a green "passed 0". Keep in step with the `wanted` calls below.
-CASES="mutual-push record-push bad-token unknown-handle sender-warns recipient-enforces"
+CASES="mutual-push record-push relay-closed bad-token unknown-handle sender-warns recipient-enforces"
 
 usage() {
   sed -n '2,60p' "$0" >&2
@@ -149,6 +149,11 @@ Cases, in the order they run:
                        Needs: token for $MUTUAL_WORKER AND a live OAuth session
                        on that hub (publishing writes their repo). Skips, not
                        fails, when the session has lapsed.
+
+  relay-closed         THE FRONT DOOR. An unauthenticated POST to
+                       /devices/<id>/send must be refused, and an unclaimed
+                       device id must get nothing even WITH the owner token.
+                       Needs: token for $OWNER_WORKER.
 
   bad-token            The sender rejects a wrong owner credential (401/403).
                        Needs: nothing.
@@ -402,7 +407,53 @@ if wanted record-push; then
   fi
 fi
 
-# ── 3. A wrong credential is refused ─────────────────────────────────────────
+# ── 3. The relay's front door is shut ────────────────────────────────────────
+# The federated path was authenticated for weeks while the relay beside it was
+# not: POST /devices/<id>/send with NO credential returned 200 on a live hub.
+# Hub URLs are published in atproto repos by design and device ids are printed
+# on the device's own screen, so every claim about mutuals being the only
+# writers was false at the front door.
+#
+# Two assertions, because the fix has two halves and either alone is a hole:
+#   1. no credential          -> refused
+#   2. owner credential, but an id this hub does not carry -> still refused,
+#      or the hub is an open relay onto other people's devices for its owner.
+if wanted relay-closed; then
+  tok=$(token_for "$OWNER_WORKER")
+  dev=$(curl -sS -m 20 -H "Authorization: Bearer $tok" "${OWNER_HUB%/}/hub/device" \
+        | jq -r '.deviceId // ""' 2>/dev/null)
+  if [[ -z "$tok" ]]; then
+    report SKIP relay-closed "no token for $OWNER_WORKER"
+  elif [[ -z "$dev" ]]; then
+    report SKIP relay-closed "$OWNER_WORKER has no device claimed"
+  else
+    # A payload the runtime ignores: this must prove the door is shut without
+    # betting that it is. If the gate were open, a real app would land on the
+    # panel, so the probe is deliberately inert.
+    probe='{"channel":"system","type":"relay-probe-ignore-me"}'
+    anon=$(curl -sS -o "$BODY" -w "%{http_code}" -m 20 -X POST \
+      -H "Content-Type: application/json" --data-binary "$probe" \
+      "${OWNER_HUB%/}/devices/$dev/send")
+
+    unclaimed=$(curl -sS -o /dev/null -w "%{http_code}" -m 20 -X POST \
+      -H "Authorization: Bearer $tok" -H "Content-Type: application/json" \
+      --data-binary "$probe" "${OWNER_HUB%/}/devices/definitelynotaclaimeddevice/send")
+
+    if [[ "$anon" == "200" ]]; then
+      report FAIL relay-closed "ANYONE CAN PUSH TO THIS DEVICE — relay is open (HTTP 200, no credential)"
+    elif [[ "$anon" != "401" && "$anon" != "403" ]]; then
+      report FAIL relay-closed "expected 401/403 for an anonymous push, got $anon"
+    elif [[ "$unclaimed" == "200" ]]; then
+      report FAIL relay-closed "hub relayed to an UNCLAIMED device id — it is an open relay"
+    elif [[ "$unclaimed" != "404" && "$unclaimed" != "403" ]]; then
+      report FAIL relay-closed "expected 404/403 for an unclaimed id, got $unclaimed"
+    else
+      report PASS relay-closed "anonymous push refused ($anon); unclaimed id refused ($unclaimed)"
+    fi
+  fi
+fi
+
+# ── 4. A wrong credential is refused ─────────────────────────────────────────
 # Cheap, but it guards a real hole: without requireOwner, anyone knowing the hub
 # URL could make it push to every one of its owner's mutuals, signed as them.
 # Hub URLs are published in atproto repos, so they are public by design.
@@ -415,7 +466,7 @@ if wanted bad-token; then
   fi
 fi
 
-# ── 4. Discovery fails cleanly ───────────────────────────────────────────────
+# ── 5. Discovery fails cleanly ───────────────────────────────────────────────
 if wanted unknown-handle; then
   tok=$(token_for "$MUTUAL_WORKER")
   if [[ -z "$tok" ]]; then
@@ -431,7 +482,7 @@ if wanted unknown-handle; then
   fi
 fi
 
-# ── 5. The sender's advisory check ───────────────────────────────────────────
+# ── 6. The sender's advisory check ───────────────────────────────────────────
 if wanted sender-warns; then
   tok=$(token_for "$OWNER_WORKER")
   has_hub=$(curl -s -m 20 "${OWNER_HUB%/}/hub/peer/$STRANGER_HANDLE" | jq -r '.found // false')
@@ -449,7 +500,7 @@ if wanted sender-warns; then
   fi
 fi
 
-# ── 6. The recipient enforces, independently ─────────────────────────────────
+# ── 7. The recipient enforces, independently ─────────────────────────────────
 # force:true skips the SENDER's advisory check on purpose. What is left is the
 # recipient's own answer, which is the only one that was ever enforcement. A
 # hostile sender would not run the courtesy check either — this simulates that

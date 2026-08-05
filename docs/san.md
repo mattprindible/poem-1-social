@@ -1,10 +1,15 @@
 # SAN — the Social Area Network
 
-**Status:** definition agreed 2026-08-05. Nothing in this document is built yet.
+**Status:** definition agreed 2026-08-05, and stages 1, 2, 3 and 5 **built and
+verified the same day** — namespace, lexicon, device claiming, many devices per
+hub, and the naming sweep. Only stage 4 (device type end to end, which needs a
+reflash) remains.
+
 It exists because the working code had drifted into assumptions nobody chose:
-one hub means one device, and the record types carry a personal handle and a
+one hub means one device, and the record types carried a personal handle and a
 single board's name. Both were fine while this was one person and one Poem/1.
-Neither survives contact with the thing it is becoming.
+Neither survives contact with the thing it is becoming. Writing the definition
+down first is what turned those into a list of edits rather than a debate.
 
 LAN, WAN, PAN — and **SAN**, a network whose topology is a social graph. Your
 devices are on it. So are your mutuals'. There is no centre.
@@ -15,15 +20,15 @@ devices are on it. So are your mutuals'. There is no centre.
 > atproto identity), one public **endpoint**, one federation **keypair**, and
 > zero or more **claimed devices**.
 
-The cardinalities are the part worth stating, because the code currently gets
-one of them wrong:
+The cardinalities are the part worth stating, because the code originally got
+one of them wrong — a hub held a single device pointer. All four now hold:
 
 | Relationship | Cardinality | State today |
 |---|---|---|
 | owner → hub | 1 : 1 | correct, and enforced (`OWNER_ITEM`) |
 | hub → endpoint | 1 : 1 | correct (the hub record's `endpoint`) |
 | hub → keypair | 1 : 1 | correct (`hub-key.ts`) |
-| **hub → device** | **1 : N** | **wrong — the hub stores a single pointer** |
+| **hub → device** | **1 : N** | correct as of 2026-08-05 (`devices.ts`) |
 | device → hub | N : 1 | correct: a device holds one socket, to its owner's hub |
 
 A device belongs to exactly one hub at a time. A hub carries as many devices as
@@ -124,9 +129,29 @@ resolution goes DNS → **DID** → PDS and never resolves a handle at all;
 handle migration is worth doing for how the account *displays*, and changes
 nothing about whether the schemas resolve.
 
-## The claiming gap
+## The claiming gap — CLOSED 2026-08-05
 
-**This is the most consequential thing in this document, and it is a live
+**Fixed.** `server/src/device-gate.ts` runs ahead of upstream's relay router and
+refuses what the relay used to accept. `relay-closed` in the suite asserts both
+halves: an anonymous push is refused, and an id this hub does not carry is
+refused *even with* the owner's credential — otherwise a hub is an open relay
+onto other people's devices for its own owner.
+
+Read the rest of this section as the statement of the problem; it is kept
+because the reasoning still governs what "claimed" has to mean.
+
+**What is still open, stated plainly:** a device authenticates with nothing but
+its id. Anyone who knows a *claimed* id can still open that device's socket and
+receive its apps. Closing that needs a per-device secret in firmware — a reflash
+plus a provisioning story — and is stage 4 below. What the gate buys today is
+that an unclaimed id gets nothing at all, so nobody can squat an arbitrary id or
+use somebody's hub as an open relay, and pushing requires the owner.
+
+The original text follows.
+
+---
+
+**This was the most consequential thing in this document, and it was a live
 security hole, not a design nicety.**
 
 The word "claimed" in the definition above describes nothing that currently
@@ -230,22 +255,31 @@ normally that would force a dual-read compatibility window. All three hubs are
 the same person's, so they can simply be cut over together. If that stops being
 true, dual-read becomes mandatory before anyone else joins.
 
-### 2. Device claiming
+### 2. Device claiming — DONE 2026-08-05
 
-The security gap. Independent of naming, so it can run in parallel, but it is
-the one that should not wait.
+`device-gate.ts` in front of upstream's router, because everything under
+`/devices/` is forwarded straight into the Durable Object and there is no seam
+inside it to hook without forking Resident.
 
-### 3. Many devices per hub
+The surface turned out wider than `/send`. Three things live under
+`/devices/<id>`, and the easiest to miss was the dangerous one: a **monitor**
+WebSocket (`?monitor=1`), which upstream broadcasts every relayed message to. It
+is a live read channel on the device, it is not a write, and it does not look
+like anything. Owner-only now, as is the bare `GET` — that one is a presence
+oracle for anyone probing device ids.
 
-Depends on claiming — a claim is what makes membership meaningful. Smaller than
-it looks: `DEVICE_ITEM` in `federation-routes.ts` is a single stored string, and
-upstream's relay is already per-device (a Durable Object each, keyed by device
-ID). The work is the hub's bookkeeping and addressing, not the transport.
+### 3. Many devices per hub — DONE 2026-08-05
 
-Open sub-question: when a mutual pushes to you and you have four devices, which
-one receives it? The sender must not choose — a sender never learns a device ID
-today, and that should not change. Likely a per-hub default plus an owner-set
-policy, but this is undecided.
+Came free with claiming, as predicted: a registry is what a claim needs, and a
+registry is what many-devices needs. `/hub/devices` claims, lists and releases;
+the old single-device key migrates itself on first read, so a hub that has been
+relaying for weeks does not lose its device — or worse, have it refused by the
+new gate.
+
+**The sub-question is answered: a per-hub DEFAULT, chosen by the recipient.**
+The sender must not pick, because a sender never learns a device id and that
+should not change. A lone device is the default without anyone saying so, which
+keeps the common case free of a setup step whose purpose nobody would guess.
 
 ### 4. Device type, end to end
 

@@ -39,6 +39,29 @@ export class HubStore extends DurableObject {
     await this.ctx.storage.delete(this.key(ns, key))
   }
 
+  /**
+   * Every live key/value in a namespace, as a plain object.
+   *
+   * Expiry is applied on read here exactly as getItem does it, so a caller
+   * listing a namespace can never see an entry that a direct read would have
+   * swept. Returning a plain object rather than a Map because this crosses a
+   * Durable Object RPC boundary.
+   */
+  async listItems(ns: string): Promise<Record<string, string>> {
+    const prefix = `${ns}:`
+    const rows = await this.ctx.storage.list<{ v: string; exp?: number }>({ prefix })
+    const now = Date.now()
+    const out: Record<string, string> = {}
+    for (const [key, record] of rows) {
+      if (record.exp !== undefined && now > record.exp) {
+        await this.ctx.storage.delete(key)
+        continue
+      }
+      out[key.slice(prefix.length)] = record.v
+    }
+    return out
+  }
+
   /** Wipe everything — used by /oauth/logout to fully unbind the hub. */
   async clearAll(): Promise<void> {
     await this.ctx.storage.deleteAll()
@@ -53,8 +76,10 @@ export const NS = {
   state: "oauth-state",
   /** Long-lived OAuth sessions, keyed by the account DID. */
   session: "oauth-session",
-  /** Hub-level facts: owner DID, federation key, this hub's device. */
+  /** Hub-level facts: owner DID, federation key, the default device. */
   hub: "hub",
+  /** Claimed devices, keyed by device id. One entry per device. */
+  device: "device",
   /** Seen federation nonces, for replay rejection inside the skew window. */
   nonce: "fed-nonce",
   /** Browser sessions for the owner's control surface, keyed by session id. */

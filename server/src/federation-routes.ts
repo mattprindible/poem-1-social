@@ -8,11 +8,17 @@ import {
   verifyInbound,
 } from "./federation"
 import { fetchHubRecordFor } from "./hub-record"
-import { NS, hubStore } from "./hub-store"
 import { IdentityError, resolveIdentity } from "./identity"
 import { describeError, getOwner } from "./oauth-routes"
 import { AuthError, requireOwner } from "./auth"
 import { AppError } from "./app-record"
+import {
+  DeviceError,
+  claimDevice,
+  defaultDevice,
+  listDevices,
+  releaseDevice,
+} from "./devices"
 import { resolveAppRef } from "./app-routes"
 
 // The federated push path.
@@ -25,7 +31,6 @@ import { resolveAppRef } from "./app-routes"
 // deliberate: on the Resident protocol a device ID is effectively a credential,
 // so federation is built so it never has to leave the hub that owns it.
 
-const DEVICE_ITEM = "device-id"
 const INBOX_PATH = "/federation/inbox"
 
 const json = (body: unknown, status = 200) =>
@@ -34,8 +39,15 @@ const json = (body: unknown, status = 200) =>
     headers: { "Content-Type": "application/json; charset=utf-8" },
   })
 
+/**
+ * Which device inbound federation and the local run-route deliver to.
+ *
+ * A hub may carry several; the sender never picks. See defaultDevice() in
+ * devices.ts — the choice belongs to the recipient, and is expressed as hub
+ * state rather than as anything a peer can put on the wire.
+ */
 async function getDeviceId(env: Env): Promise<string | undefined> {
-  return hubStore(env).getItem(NS.hub, DEVICE_ITEM)
+  return defaultDevice(env)
 }
 
 /**
@@ -140,31 +152,86 @@ export async function routeFederationRequest(
     !path.startsWith("/federation/") &&
     path !== "/hub/device" &&
     path !== "/hub/device/events" &&
-    path !== "/hub/device/app"
+    path !== "/hub/device/app" &&
+    path !== "/hub/devices" &&
+    !path.startsWith("/hub/devices/")
   ) {
     return null
   }
 
   try {
-    // ── Which device this hub relays to ──────────────────────────────────
-    // Stored on the hub rather than supplied per-push, so a device ID never
-    // travels between hubs.
+    // ── The claimed devices ──────────────────────────────────────────────
+    // Owner-gated throughout, reads included: a device id is what the relay
+    // keys on, so listing them is not a public read.
+    if (path === "/hub/devices") {
+      await requireOwner(env, request)
+
+      if (request.method === "GET") {
+        const devices = await listDevices(env)
+        return json({ count: devices.length, devices })
+      }
+
+      // Claiming is the act that makes a hub carry a device at all — before
+      // this, the relay carried anything that connected.
+      if (request.method === "POST") {
+        const body = (await request.json()) as {
+          deviceId?: string
+          name?: string
+          deviceType?: string
+          makeDefault?: boolean
+        }
+        const deviceId = body.deviceId?.trim()
+        if (!deviceId) {
+          return json({ error: "bad_request", message: "need { deviceId }" }, 400)
+        }
+        const device = await claimDevice(env, deviceId, {
+          name: body.name,
+          deviceType: body.deviceType,
+          makeDefault: body.makeDefault,
+        })
+        return json({ ok: true, device })
+      }
+    }
+
+    if (path.startsWith("/hub/devices/") && request.method === "DELETE") {
+      await requireOwner(env, request)
+      const deviceId = decodeURIComponent(path.slice("/hub/devices/".length))
+      await releaseDevice(env, deviceId)
+      return json({
+        ok: true,
+        deviceId,
+        message: "device released; this hub will no longer carry it",
+      })
+    }
+
+    // ── Which device inbound federation lands on ─────────────────────────
+    // Kept as its own route because it answers a different question from
+    // "what do I carry": with several devices claimed, the recipient decides
+    // where a mutual's push goes, and no sender can influence it.
     if (path === "/hub/device") {
-      // GET is guarded too: a device ID is effectively a credential on the
-      // Resident protocol, so this must not be a public read.
       await requireOwner(env, request)
       if (request.method === "GET") {
         const deviceId = await getDeviceId(env)
-        return deviceId ? json({ deviceId }) : json({ deviceId: null }, 404)
+        return deviceId
+          ? json({ deviceId })
+          : json(
+              {
+                deviceId: null,
+                message:
+                  "no default device — claim one with POST /hub/devices, or set " +
+                  "makeDefault when several are claimed",
+              },
+              404,
+            )
       }
       if (request.method === "POST") {
         const body = (await request.json()) as { deviceId?: string }
         const deviceId = body.deviceId?.trim()
-        if (!deviceId || !/^[a-zA-Z0-9_-]{4,64}$/.test(deviceId)) {
-          return json({ error: "bad_request", message: "deviceId required" }, 400)
+        if (!deviceId) {
+          return json({ error: "bad_request", message: "need { deviceId }" }, 400)
         }
-        await hubStore(env).setItem(NS.hub, DEVICE_ITEM, deviceId)
-        return json({ ok: true, deviceId })
+        const device = await claimDevice(env, deviceId, { makeDefault: true })
+        return json({ ok: true, deviceId: device.deviceId })
       }
     }
 
@@ -381,6 +448,9 @@ export async function routeFederationRequest(
     }
     if (err instanceof AppError) {
       return json({ error: "app_error", message: err.message }, err.status)
+    }
+    if (err instanceof DeviceError) {
+      return json({ error: "device_error", message: err.message }, err.status)
     }
     if (err instanceof IdentityError) {
       return json({ error: "identity_error", message: err.message }, err.status)

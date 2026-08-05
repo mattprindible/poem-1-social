@@ -24,7 +24,7 @@ asymmetric follow is the relationship a sloppy graph check gets wrong, because
 runs the whole thing — push and refusals — as one command.
 
 **Apps are records as of 2026-08-05.** An app is now published into its author's
-own repo as `is.mfd.poem1.app`, and the federation suite's `record-push` case
+own repo as `computer.haha.san.app`, and the federation suite's `record-push` case
 proves the round trip: a record published to one account's repo, pushed to
 another account's device *by reference*, and compiled there — verified by the
 device's own telemetry, not by the relay's 200. Listing someone else's library
@@ -35,17 +35,21 @@ What does NOT exist yet: weak-tie discovery, and any of the onboarding work.
 
 **Stepping back, 2026-08-05.** Reviewing the code against the concept turned up
 two things it had assumed rather than chosen: a hub carries exactly one device,
-and the record types are named after one person's handle and one board. Both are
-being corrected — the definition of a hub, the `computer.haha.san.*` namespace,
-and the staged migration are in [`san.md`](san.md). That review also found that
-**the direct relay path is unauthenticated**, which is the most urgent item in
-this project and is described under "Push is the only write path" below.
+and the record types were named after one person's handle and one board. Both
+are now corrected — the definition of a hub, the `computer.haha.san.*`
+namespace, and the migration are in [`san.md`](san.md).
 
-**Namespace — SETTLED 2026-08-05, migration not yet done.** Records currently use
-`is.mfd.poem1.*` and will move to `computer.haha.san.*`, under the authority
-`san.haha.computer`. The old namespace was wrong on two independent axes: it
-carried a *personal handle*, and it named *one board* in a type that describes a
-sandbox app. See [`san.md`](san.md) for the reasoning and the staged migration.
+That review also found the **direct relay path was unauthenticated**, which was
+the most serious thing in the project and is now closed — see "Push is the only
+write path" below. Worth noting how it was found: not by a test or a report, but
+by writing down what a hub *is* and checking the code against it. The hole had
+been there since the first hub existed.
+
+**Namespace — SETTLED AND MIGRATED 2026-08-05.** Records moved from
+`is.mfd.poem1.*` to `computer.haha.san.*`, under the authority
+`san.haha.computer`, whose schemas are published and resolve. The old namespace
+was wrong on two independent axes: it carried a *personal handle*, and it named
+*one board* in a type that describes a sandbox app. See [`san.md`](san.md) for the reasoning and the staged migration.
 `tech.inanimate.*` remains not ours to claim without asking; the same courtesy
 now also keeps "Resident" out of every NSID, URL and wire identifier.
 Supersedes the earlier "self-hosted Worker" napkin sketch (auth + error feedback),
@@ -74,19 +78,23 @@ Identity and the social graph come from **AT Protocol** (Bluesky accounts).
 Push is the only write path, and only mutuals have it. Everything a weak tie
 offers you, *you* pull.
 
-> ⚠️ **"Nothing unbidden reaches your hardware from outside your mutuals" is NOT
-> TRUE TODAY.** That was written as a description of the design and has been
-> read since as a description of the system. The *federated* path enforces it —
-> signature plus mutual check, with the refusals proven. The **direct relay path
-> does not authenticate at all**: `POST /devices/<id>/send` with no credential
-> returned 200 against the live hub on 2026-08-05. Hub URLs are public by
-> design and device IDs are printed on the device's screen.
+> **TRUE AS OF 2026-08-05 — and it was not, for weeks before that.** The
+> *federated* path always enforced it (signature plus mutual check, refusals
+> proven). The **direct relay path authenticated nothing**: `POST
+> /devices/<id>/send` with no credential returned 200 against the live hub, and
+> hub URLs are public by design while device IDs are printed on the device's
+> screen. The sentence above was written to describe the design and got read as
+> a description of the system.
 >
-> Device-side *mechanism* is unaffected — sandbox, driver allowlist, flip limits
-> and hold-to-stop all hold against a hostile push from any source — so the
-> exposure is "anyone can put things on your screen", not "anyone can take your
-> Wi-Fi credentials". Closing it is the **claiming** work in [`san.md`](san.md),
-> and it is the highest-priority item in this project.
+> Closed by the device gate ([`san.md`](san.md)): pushing requires the owner,
+> and a hub carries only devices its owner has **claimed**. The suite's
+> `relay-closed` case asserts both halves so it cannot silently reopen.
+>
+> **Still open, and worth knowing:** a device proves its identity with nothing
+> but its ID, so anyone who knows a *claimed* ID can still open that device's
+> socket and receive its apps. That needs a per-device secret in firmware.
+> Device-side *mechanism* is unaffected throughout — sandbox, driver allowlist,
+> flip limits and hold-to-stop hold against a hostile push from any source.
 
 Social trust changes **policy** (who may push), never **mechanism** (what pushed
 code can do). The Lua sandbox, driver allowlists, and e-ink flip rate limits stay
@@ -102,12 +110,15 @@ your devices ⇄ (WSS) ⇄ your hub ⇄ (HTTPS) ⇄ their hub ⇄ (WSS) ⇄ thei
 Each person runs their own hub (a Cloudflare Worker + Durable Object). A device
 only ever holds a socket to its **owner's** hub.
 
-> **A hub carries MANY devices — one owner, N devices.** The code does not do
-> this yet: it stores a single device pointer, which was an unexamined
-> convenience from the days of one person and one Poem/1. Resident runs on ESP32
-> boards generally and this repo already has a second device. The definition,
-> the cardinalities, and what has to change are in [`san.md`](san.md). Federation is ordinary HTTPS
-between two public endpoints — no NAT traversal, no P2P, no rendezvous server.
+Federation is ordinary HTTPS between two public endpoints — no NAT traversal,
+no P2P, no rendezvous server.
+
+> **A hub carries MANY devices — one owner, N devices**, and only devices its
+> owner has explicitly **claimed**. Built 2026-08-05; before that a hub held a
+> single device pointer that gated nothing, an unexamined convenience from the
+> days of one person and one Poem/1. Resident runs on ESP32 boards generally and
+> this repo already has a second device. Definition and cardinalities:
+> [`san.md`](san.md).
 
 The hub's job is deliberately small: hold the device socket, relay pushes, verify
 inbound requests. **Discovery does not involve the hub at all.**
@@ -115,7 +126,7 @@ inbound requests. **Discovery does not involve the hub at all.**
 ## Identity, discovery, and revocation: one record
 
 Trust is anchored in a record the owner publishes in their own atproto repo — say
-`is.mfd.poem1.hub` — containing the hub's **endpoint URL** and its
+`computer.haha.san.hub` — containing the hub's **endpoint URL** and its
 **public key**.
 
 Each hub generates its own keypair and signs its own outbound requests. A
@@ -155,7 +166,7 @@ identity. The repo record is available to everyone right now.
 ## Apps are records too — BUILT and verified 2026-08-05
 
 Apps are **durable artifacts, not throwaway pushes**. An app is an atproto record
-(`is.mfd.poem1.app`) holding the Lua source plus metadata.
+(`computer.haha.san.app`) holding the Lua source plus metadata.
 
 The record key is derived from the app's **name**, not a random TID. That is the
 decision the rest of this section rests on: re-publishing the same name is an

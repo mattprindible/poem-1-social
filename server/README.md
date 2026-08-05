@@ -1,4 +1,4 @@
-# server — your Poem/1 hub
+# server — your SAN hub
 
 A Cloudflare Worker that is **your** Resident relay, plus the social layer built
 on top of it. One hub, one owner, one atproto identity.
@@ -9,9 +9,11 @@ starting point. The relay logic still lives in the `@inanimate/resident` package
 so nothing is forked; everything here is additive.
 
 Why bother rather than using the public relay: **the public relay has no
-authentication.** Anyone who knows your device ID can push code to your Poem/1.
-Owning the endpoint is the prerequisite for everything else. The design and its
-reasoning live in [`../docs/social-plan.md`](../docs/social-plan.md).
+authentication** — anyone who knows your device ID can push code to your device.
+This hub does authenticate (see the relay gate below), and owning the endpoint is
+the prerequisite for everything else. The design and its reasoning live in
+[`../docs/social-plan.md`](../docs/social-plan.md) and
+[`../docs/san.md`](../docs/san.md).
 
 ## Deploy
 
@@ -52,6 +54,28 @@ printf '%s' "$TOKEN" | npx wrangler secret put HUB_ADMIN_TOKEN
 
 ## Routes
 
+### The relay gate
+
+Everything under `/devices/` passes `src/device-gate.ts` **before** the relay
+router below, because upstream forwards those straight into the Durable Object
+and there is no seam inside it to hook without forking Resident.
+
+| Under `/devices/<id>` | Who may |
+|---|---|
+| `POST /send` | owner only — **this was the hole** |
+| WS `?monitor=1` | owner only; upstream broadcasts every relayed message to monitors, so it is a live read channel |
+| WS (device) | any **claimed** id |
+| `GET` (status) | owner only; a presence oracle otherwise |
+
+A hub carries only what its owner has claimed, so an unclaimed id gets nothing —
+that is what stops a hub being an open relay, in both directions. `POST /send`
+additionally requires the owner even for a claimed device.
+
+**The remaining gap, stated plainly:** a device authenticates with nothing but
+its id, so anyone knowing a *claimed* id can still open that device's socket.
+Closing it needs a per-device secret in firmware — a reflash plus provisioning.
+See `docs/san.md`.
+
 ### Device relay (the canonical Resident protocol)
 
 | Route | |
@@ -91,7 +115,9 @@ printf '%s' "$TOKEN" | npx wrangler secret put HUB_ADMIN_TOKEN
 | `POST /federation/push` 🔒 | push an app to a mutual's device |
 | `POST /federation/inbox` | receive one — authenticated by **signature**, not by owner |
 | `GET /federation/relationship/<who>` | are we mutuals |
-| `GET \| POST /hub/device` 🔒 | which device this hub relays to |
+| `GET \| POST /hub/devices` 🔒 | list / claim devices |
+| `DELETE /hub/devices/<id>` 🔒 | release one |
+| `GET \| POST /hub/device` 🔒 | which device inbound federation lands on |
 | `GET /hub/device/events` 🔒 | what that device has **said back** — see below |
 | `POST /hub/device/app` 🔒 | load an app onto **your own** device |
 
@@ -126,7 +152,7 @@ field added to that envelope is one this project is committing to forever.
 | `GET /apps/<ref>` | one app, source included |
 | `DELETE /apps/<rkey>` 🔒 | unpublish (your repo only) |
 
-An app is a record in its author's own atproto repo, `is.mfd.poem1.app`, keyed
+An app is a record in its author's own atproto repo, `computer.haha.san.app`, keyed
 by a slug derived from its name — so re-publishing a name is an **edit** that
 mints a new CID. Note that a repo holds *current state*, not an archive: a
 superseded CID answers `RecordNotFound`, so versions are identifiable and
@@ -237,12 +263,15 @@ src/identity.ts           atproto resolution: handle -> DID -> PDS
 src/oauth.ts              client metadata + client key
 src/oauth-client.ts       @atproto/oauth-client wired for Workers
 src/oauth-routes.ts       login / callback / session / logout
+src/device-gate.ts        the relay gate — auth + claim check, ahead of upstream
+src/devices.ts            the device registry: claim, release, list, default
 src/hub-key.ts            federation signing key
 src/pds.ts                XRPC to a PDS: authenticated (session) and public
 src/hub-record.ts         the hub record: read, publish, delete, discover
 src/hub-routes.ts         hub record + peer discovery routes
 src/app-record.ts         app records: publish, read, list, delete, ref parsing
 src/app-routes.ts         the app library, and the shared reference resolver
+src/lexicon.ts            the published schemas, and whether they resolve
 src/federation.ts         signing, verification, mutual-follow checks
 src/federation-routes.ts  push and inbox
 scripts/gen-key.mjs       generate the OAuth client key (WebCrypto, no deps)

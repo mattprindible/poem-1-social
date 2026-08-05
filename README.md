@@ -102,24 +102,33 @@ A fresh clone pushes to the public relay at `resident.inanimate.tech`. That
 relay has **no authentication** — anyone who knows your device ID can push code
 to your Poem/1 — so this project runs its own hub instead.
 
-> [!WARNING]
-> **Running your own hub does not fix that yet.** It changed who hosts the
-> relay, not whether it authenticates: `POST /devices/<id>/send` against your
-> own hub, with no credential, still returns 200. The *federated* path (hub to
-> hub) is properly authenticated and its refusals are proven; the direct relay
-> path is not. Closing this is the "claiming" work in
-> [`docs/san.md`](docs/san.md). Until then, treat your hub URL as more sensitive
-> than it looks — and note the 3-second hold still stops anything, whoever sent
-> it.
+Your own hub **does** authenticate, as of 2026-08-05. Pushing needs the owner's
+credential, and a hub only carries devices you have explicitly **claimed**:
+
+```sh
+./apps.sh devices                          # what this hub carries
+./apps.sh claim fccf2990 --name "desk"     # start carrying one
+./apps.sh release fccf2990                 # stop
+```
+
+An unclaimed device ID gets nothing — no socket, no traffic — so nobody can
+squat an ID or use your hub as an open relay.
+
+> [!NOTE]
+> One gap remains, and it is worth knowing: a device proves who it is with
+> nothing but its ID. Anyone who knows a **claimed** ID can still open that
+> device's socket and receive its apps. Closing that needs a per-device secret
+> in firmware, which means a reflash — see [`docs/san.md`](docs/san.md). The
+> 3-second hold stops anything that lands, whoever sent it.
 
 [`server/`](server/) is a Cloudflare Worker (copied from Resident's
 `server-template`) that speaks the same protocol. Deploy your own, then move the
 device to it **over the air — no reflashing**:
 
 ```sh
-cd server && npm install && npx wrangler deploy   # -> poem1-hub.<account>.workers.dev
+cd server && npm install && npx wrangler deploy   # -> <name>.<account>.workers.dev
 cd ..
-./set-hub.sh poem1-hub.<account>.workers.dev      # device switches live
+./set-hub.sh <name>.<account>.workers.dev         # device switches live
 ./set-hub.sh --clear                              # back to the public relay
 ```
 
@@ -206,7 +215,7 @@ account to sign in **claims** the hub; afterwards only that DID may. Signing in
 publishes a record into your own atproto repo:
 
 ```
-at://<your-did>/is.mfd.poem1.hub/self
+at://<your-did>/computer.haha.san.hub/self
 ```
 
 That single record does three jobs — **discovery** (where your hub is),
@@ -244,7 +253,7 @@ So an app can also be published into your own atproto repo, as a record:
 ```
 
 ```
-at://<your-did>/is.mfd.poem1.app/minute-clock
+at://<your-did>/computer.haha.san.app/minute-clock
 ```
 
 Authorship, versioning, history and portability all come from atproto rather

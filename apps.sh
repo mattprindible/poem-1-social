@@ -46,6 +46,11 @@ Commands:
   run REF                 Load an app onto your own device.
   push TO REF [--force]   Push an app to TO's device. Mutuals only.
   delete RKEY             Remove an app record from your repo.
+  devices                 What devices this hub carries.
+  claim ID [--name N] [--type T] [--default]
+                          Start carrying a device. Until claimed, a device gets
+                          no socket and no traffic from this hub.
+  release ID              Stop carrying a device.
   lexicon                 Does this project's schema resolve? (DNS + records)
   lexicon publish         Publish the schemas into your repo. Only meaningful
                           for the account the authority's TXT record names.
@@ -60,6 +65,8 @@ args=()
 force=0
 name=""
 description=""
+devtype=""
+makedefault=0
 
 # The command is the first bare word, wherever it falls — flags are global and
 # may come before it (`./apps.sh --hub URL list`) or after (`list --hub URL`).
@@ -70,6 +77,8 @@ while [[ $# -gt 0 ]]; do
     --name)        name="$2"; shift 2 ;;
     --description) description="$2"; shift 2 ;;
     --force)       force=1; shift ;;
+    --type)        devtype="$2"; shift 2 ;;
+    --default)     makedefault=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     -*)            echo "apps: unknown option: $1" >&2; exit 2 ;;
     *)             if [[ -z "$cmd" ]]; then cmd="$1"; else args+=("$1"); fi; shift ;;
@@ -230,6 +239,36 @@ case "$cmd" in
     [[ -z "$rkey" ]] && { echo "apps: delete needs an RKEY" >&2; exit 2; }
     status=$(call DELETE "/apps/$(urlenc "$rkey")" "" --auth)
     finish "$status" '"Deleted \(.rkey)."'
+    ;;
+
+  devices)
+    status=$(call GET /hub/devices "" --auth)
+    finish "$status" '
+      if .count == 0 then "This hub carries no devices. Claim one: ./apps.sh claim <id>"
+      else "\(.count) device(s):\n" +
+        ([.devices[] | "  \(.deviceId)\(if .isDefault then "  (default)" else "" end)" +
+          "\(if .name then "  " + .name else "" end)" +
+          "\(if .deviceType then "  [" + .deviceType + "]" else "" end)"] | join("\n"))
+      end'
+    ;;
+
+  claim)
+    id="${args[0]:-}"
+    [[ -z "$id" ]] && { echo "apps: claim needs a device ID" >&2; exit 2; }
+    payload=$(jq -n --arg id "$id" --arg n "$name" --arg t "$devtype" --argjson d "$makedefault" \
+      '{deviceId: $id}
+       + (if $n == "" then {} else {name: $n} end)
+       + (if $t == "" then {} else {deviceType: $t} end)
+       + (if $d == 1 then {makeDefault: true} else {} end)')
+    status=$(call POST /hub/devices "$payload" --auth)
+    finish "$status" '"Claimed \(.device.deviceId)\(if .device.isDefault then " (default)" else "" end)."'
+    ;;
+
+  release)
+    id="${args[0]:-}"
+    [[ -z "$id" ]] && { echo "apps: release needs a device ID" >&2; exit 2; }
+    status=$(call DELETE "/hub/devices/$(urlenc "$id")" "" --auth)
+    finish "$status" '"\(.message) (\(.deviceId))"'
     ;;
 
   lexicon)
