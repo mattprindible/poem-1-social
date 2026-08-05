@@ -105,6 +105,25 @@ third-party tool able to *validate* our records rather than just pretty-print
 them. Note the DID in step 1 is only a pointer: the **domain** is the authority,
 so the schemas can move repos later without the NSID changing.
 
+**DONE 2026-08-05.** The TXT record exists and both schemas resolve — verified
+from a hub that owns none of it, and again by hand from cold DNS.
+
+The authority DID is **`did:plc:pyp36qey354yxslrcavwzqja`** — the account that
+*is* `haha.computer` — not the project owner's personal `mfd.is`. The domain is
+what confers authority, so either would have worked mechanically; pointing at
+the domain's own identity keeps the fabric from being anchored to a personal
+handle, which is the whole reason the namespace moved in the first place.
+
+**Handle verification is irrelevant here, which is worth stating because it
+looks like it should matter.** At the time of writing, `haha.computer` is only
+half-migrated as a handle: the `_atproto` TXT record points at that DID, but the
+DID document's `alsoKnownAs` still says `hahacomputer.bsky.social`, so the
+handle does not verify bidirectionally. It makes no difference. Lexicon
+resolution goes DNS → **DID** → PDS and never resolves a handle at all;
+`resolveIdentity` given a DID goes straight to the DID document. Finishing the
+handle migration is worth doing for how the account *displays*, and changes
+nothing about whether the schemas resolve.
+
 ## The claiming gap
 
 **This is the most consequential thing in this document, and it is a live
