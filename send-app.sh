@@ -124,9 +124,24 @@ echo "Sending $app_label to $endpoint" >&2
 tmp_body=$(mktemp)
 trap 'rm -f "$tmp_body"' EXIT
 
+# Your own hub REFUSES an unauthenticated push (see server/src/device-gate.ts).
+# The public relay does not, and needs no token — so the credential is attached
+# only when this machine has one for the host being pushed to, and its absence
+# is never an error here. Same keychain convention as set-hub.sh and apps.sh:
+# service "poem1-hub-admin", account = the worker name = first hostname label.
+auth_header=()
+token="${HUB_ADMIN_TOKEN:-}"
+if [[ -z "$token" ]] && command -v security >/dev/null 2>&1; then
+  host="${base_url#*://}"; host="${host%%/*}"
+  token=$(security find-generic-password -a "${host%%.*}" \
+    -s "poem1-hub-admin" -w 2>/dev/null || true)
+fi
+[[ -n "$token" ]] && auth_header=(-H "Authorization: Bearer $token")
+
 http_code=$(curl -sS -o "$tmp_body" -w "%{http_code}" \
   -X POST \
   -H "Content-Type: application/json" \
+  "${auth_header[@]}" \
   --data-binary "$payload" \
   "$endpoint")
 
@@ -134,6 +149,19 @@ case "$http_code" in
   200)
     echo "Sent." >&2
     exit 0
+    ;;
+  401|403)
+    echo "send-app: refused — this hub requires the owner's credential." >&2
+    echo "  Set \$HUB_ADMIN_TOKEN, or store it in the keychain:" >&2
+    echo "    security add-generic-password -a <worker> -s poem1-hub-admin -w <token>" >&2
+    cat "$tmp_body" >&2; echo >&2
+    exit 1
+    ;;
+  404)
+    echo "send-app: this hub does not carry device '$device_id'." >&2
+    echo "  Claim it first:  POST /hub/devices  {\"deviceId\":\"$device_id\"}" >&2
+    cat "$tmp_body" >&2; echo >&2
+    exit 1
     ;;
   503)
     echo "send-app: device not connected." >&2

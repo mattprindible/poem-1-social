@@ -81,6 +81,12 @@ with the **device ID** — you'll need that to push apps.
 cat my-app.lua | ./send-app.sh --device-id <id>
 ```
 
+> [!NOTE]
+> Pushing to **your own** hub needs the owner credential, which `send-app.sh`
+> picks up from `$HUB_ADMIN_TOKEN` or the macOS keychain automatically. The
+> public relay needs none. If you get a 401, the token for that hub isn't on
+> this machine — see [`server/README.md`](server/README.md).
+
 Apps in [`device-apps/`](device-apps/): `minute-clock`, `battery-watch`,
 `hello-status`, `first-light`, `hw-survey`, `nightfall` (a still night scene,
 drawn once and left alone — the calmest thing to leave on the panel), `standby`,
@@ -102,14 +108,33 @@ A fresh clone pushes to the public relay at `resident.inanimate.tech`. That
 relay has **no authentication** — anyone who knows your device ID can push code
 to your Poem/1 — so this project runs its own hub instead.
 
+Your own hub **does** authenticate, as of 2026-08-05. Pushing needs the owner's
+credential, and a hub only carries devices you have explicitly **claimed**:
+
+```sh
+./apps.sh devices                          # what this hub carries
+./apps.sh claim fccf2990 --name "desk"     # start carrying one
+./apps.sh release fccf2990                 # stop
+```
+
+An unclaimed device ID gets nothing — no socket, no traffic — so nobody can
+squat an ID or use your hub as an open relay.
+
+> [!NOTE]
+> One gap remains, and it is worth knowing: a device proves who it is with
+> nothing but its ID. Anyone who knows a **claimed** ID can still open that
+> device's socket and receive its apps. Closing that needs a per-device secret
+> in firmware, which means a reflash — see [`docs/san.md`](docs/san.md). The
+> 3-second hold stops anything that lands, whoever sent it.
+
 [`server/`](server/) is a Cloudflare Worker (copied from Resident's
 `server-template`) that speaks the same protocol. Deploy your own, then move the
 device to it **over the air — no reflashing**:
 
 ```sh
-cd server && npm install && npx wrangler deploy   # -> poem1-hub.<account>.workers.dev
+cd server && npm install && npx wrangler deploy   # -> <name>.<account>.workers.dev
 cd ..
-./set-hub.sh poem1-hub.<account>.workers.dev      # device switches live
+./set-hub.sh <name>.<account>.workers.dev         # device switches live
 ./set-hub.sh --clear                              # back to the public relay
 ```
 
@@ -185,7 +210,9 @@ your device.
 
 ```sh
 cd server
-npm run gen-key | npx wrangler secret put HUB_PRIVATE_JWK
+# Run the script directly: `npm run gen-key |` pipes npm's own banner into
+# the secret, and the hub then reports HUB_PRIVATE_JWK as invalid JSON.
+node scripts/gen-key.mjs | npx wrangler secret put HUB_PRIVATE_JWK
 npx wrangler deploy
 ```
 
@@ -194,7 +221,7 @@ account to sign in **claims** the hub; afterwards only that DID may. Signing in
 publishes a record into your own atproto repo:
 
 ```
-at://<your-did>/is.mfd.poem1.hub/self
+at://<your-did>/computer.haha.san.hub/self
 ```
 
 That single record does three jobs — **discovery** (where your hub is),
@@ -212,14 +239,53 @@ curl https://<your-hub>/hub/peer/someone.bsky.social
 That resolves handle → DID → PDS → their hub record, entirely from public
 infrastructure.
 
+### Apps are records too
+
+`send-app.sh` pushes a *file*. That is the right tool while you are iterating
+with the thing in front of you, but it has no idea what it sent — no name, no
+author, no version, no history. Fine for one person with a cable; useless the
+moment an app arrives from someone else and the only question worth asking is
+"what is this, and who wrote it".
+
+So an app can also be published into your own atproto repo, as a record:
+
+```sh
+./apps.sh publish device-apps/minute-clock.lua
+./apps.sh list                             # yours
+./apps.sh list alice.bsky.social           # theirs — no account, no index
+./apps.sh show alice.bsky.social/minute-clock
+./apps.sh run minute-clock                 # onto your own device
+./apps.sh push alice.bsky.social minute-clock
+```
+
+```
+at://<your-did>/computer.haha.san.app/minute-clock
+```
+
+Authorship, versioning, history and portability all come from atproto rather
+than from anything here: records are signed, the record key is derived from the
+name so re-publishing is an **edit** with a new CID, and the library outlives
+this hub and this project. It also collapses discovery into a read — finding
+someone's apps is listing a collection in their repo. There is no app store.
+
+Because that is pure atproto, **you can browse and publish before you own a hub
+or a Poem/1** — which is the main defence against a cold start.
+
+An app is named the same way everywhere: `minute-clock` in your library,
+`alice.bsky.social/minute-clock` in hers, or the full `at://…` URI.
+
 ### Pushing to someone else's device
 
 ```sh
 curl -X POST https://<your-hub>/federation/push \
   -H "Authorization: Bearer $HUB_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"to":"friend.bsky.social","code":"'"$(cat app.lua)"'"}'
+  -d '{"to":"friend.bsky.social","app":"minute-clock"}'
 ```
+
+`{"code": "<lua>"}` still works for something you have not published. Either way
+the **sender** resolves the app to source before signing, so the federation wire
+format is unchanged — a hub running older code cannot tell the two apart.
 
 Their hub accepts it only if **both** hold:
 
@@ -232,22 +298,34 @@ untouched — and the 3-second button hold stops anything, whoever sent it.
 
 ### Testing it
 
-This path needs two identities, two hubs, a live mutual follow and a physical
-device, so it is the most important thing here and the most expensive to check.
-[`test-federation.sh`](test-federation.sh) runs the whole chain — credential,
-discovery, signing, verification, mutual check, delivery — and asserts on the
-*device's* answer rather than the relay's:
+This needs four atproto identities, four hubs, a real follow graph and a
+physical device — the most important thing here and the most expensive to
+check. [`test-federation.sh`](test-federation.sh) runs the whole trust chain and
+asserts on the *device's* own answer rather than the relay's:
 
 ```sh
-./test-federation.sh                      # push federated-hello.lua
-./test-federation.sh --force              # let the RECIPIENT's check be the test
+./test-federation.sh                 # every configured case
+./test-federation.sh --list          # what each case needs
+./test-federation.sh --only discovery
+./test-federation.sh -v              # full JSON per case
 ```
+
+Nine cases, covering each link: the device proves it is that device
+(`device-identity`), the hub carries only claimed devices and refuses anonymous
+pushes (`relay-closed`), a peer proves who they are and is checked against the
+graph (`mutual-push`, `recipient-enforces`), and capabilities are asked for live
+rather than remembered (`discovery`).
+
+Two of them deliberately misbehave, which is what `tools/fake-device.mjs` is
+for: it stands in for firmware so the impostor cases — wrong key, no key,
+silence — can be exercised without asking real hardware to attack itself.
 
 It reads the sender's owner token from `$HUB_ADMIN_TOKEN` or the macOS keychain.
 Cloudflare secrets are write-only, so record the token once when you set it
 rather than rotating it every time you want to run this — the script's header has
-the exact commands. You do **not** need an OAuth browser session for this; that
-is only for claiming a hub and publishing its record.
+the exact commands. A token is enough for every case except `record-push`, which
+publishes into the sender's repo and so needs that hub's OAuth session to still
+be live; it skips rather than fails when the session has lapsed.
 
 Routes, deployment and the trust model in detail: [`server/README.md`](server/README.md).
 Why it is built this way: [`docs/social-plan.md`](docs/social-plan.md).

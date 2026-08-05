@@ -12,6 +12,7 @@
 #include "ButtonDriver.h"
 #include "ProbeDrivers.h"
 #include "HubConfig.h"
+#include "DeviceIdentity.h"
 
 // Which hub this device talks to is RUNTIME config (NVS), not compile-time, so
 // one binary works for everyone and moving hubs is a message rather than a
@@ -191,6 +192,50 @@ static void handleSetHub(JsonDocument& doc) {
     sandbox.courier().reconnect();
 }
 
+// ── Identity: prove we are this device ───────────────────────────────────
+// The hub answers a connect with {channel:"system", type:"identify", challenge};
+// we sign it with a key generated on first boot and kept in NVS.
+//
+// Why this exists: a device id is printed on this device's own screen, and used
+// to be the only thing a device presented — so anyone who read one could open
+// this socket and receive the apps meant for here. Knowing an id is not
+// evidence of anything; holding the key is.
+//
+// Nothing is volunteered on connect. A proof must answer a FRESH challenge;
+// anything sent before one arrives is a password, replayable by whoever
+// captured it once.
+//
+// Self-description rides on this same frame rather than on `hello`, and that is
+// deliberate: what a device claims to be is worth nothing until it has shown
+// who it is, and the hub records it only from a proved connection. Sending it
+// earlier would invite it to be believed earlier.
+static void handleIdentify(JsonDocument& doc) {
+    const char* challenge = doc["challenge"] | "";
+    if (!challenge[0]) return;
+
+    String sig = DeviceIdentity::sign(challenge);
+    String pub = DeviceIdentity::publicKeyBase64();
+    if (sig.isEmpty() || pub.isEmpty()) {
+        Serial.println("[identity] FAILED to sign the challenge");
+        return;
+    }
+
+    JsonDocument reply;
+    reply["type"] = "identify";
+    reply["pubkey"] = pub;
+    reply["sig"] = sig;
+    JsonObject device = reply["device"].to<JsonObject>();
+    device["deviceType"] = "poem1";
+    JsonObject screen = device["screen"].to<JsonObject>();
+    screen["w"] = poemDisplay.width();
+    screen["h"] = poemDisplay.height();
+    screen["colors"] = 2;  // 1-bit e-ink
+    sandbox.sendSystem(reply);
+
+    Serial.printf("[identity] answered challenge, fingerprint %s\n",
+                  DeviceIdentity::fingerprint().c_str());
+}
+
 void setup() {
     Serial.begin(115200);
     delay(2000);  // wait for USB CDC
@@ -229,9 +274,15 @@ void setup() {
     // independently — which matters here because the device is reflashed over
     // USB while the hubs deploy separately. The legacy registration can be
     // dropped once every sender is known to stamp.
+    // ONE slot per channel, last registration wins — so identity dispatches
+    // from inside this handler rather than registering its own. Registering a
+    // second "system" handler would have silently unhooked set_hub, taking
+    // set-hub.sh with it and leaving no way to move the device off a hub
+    // without a reflash.
     auto handleControl = [](const char* /*transport*/, const char* type,
                             JsonDocument& doc) {
         if (strcmp(type, "set_hub") == 0) handleSetHub(doc);
+        else if (strcmp(type, "identify") == 0) handleIdentify(doc);
     };
     sandbox.onMessageWithChannel("system", handleControl);  // channel:"system"
     sandbox.onMessage(handleControl);                       // legacy, un-channelled
@@ -306,6 +357,11 @@ void setup() {
         hello["stored"] = g_usingStoredHub;
         hello["fellback"] = g_fellBackToDefault;
         sandbox.sendSystem(hello);
+
+        // The hub answers a connect with an `identify` challenge, handled
+        // below. Nothing is sent here: a proof has to be a response to a fresh
+        // challenge, and anything volunteered before one arrives would be a
+        // password — replayable by whoever captured it once.
         // Timezone lookup needs the network up, so it lives here rather than
         // in SandboxConfig (whose configure() runs pre-WiFi). Guarded so
         // reconnects don't re-query. Uses stock Resident's IANA lookup (ezTime

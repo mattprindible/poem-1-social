@@ -51,7 +51,7 @@ export const JWKS_PATH = "/.well-known/jwks.json";
 export function clientMetadata(origin: string): ClientMetadata {
   return {
     client_id: `${origin}${CLIENT_METADATA_PATH}`,
-    client_name: "Poem/1 Social hub",
+    client_name: "SAN hub",
     client_uri: origin,
     redirect_uris: [`${origin}${CALLBACK_PATH}`],
     grant_types: ["authorization_code", "refresh_token"],

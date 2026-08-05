@@ -1,4 +1,4 @@
-# server — your Poem/1 hub
+# server — your SAN hub
 
 A Cloudflare Worker that is **your** Resident relay, plus the social layer built
 on top of it. One hub, one owner, one atproto identity.
@@ -9,15 +9,19 @@ starting point. The relay logic still lives in the `@inanimate/resident` package
 so nothing is forked; everything here is additive.
 
 Why bother rather than using the public relay: **the public relay has no
-authentication.** Anyone who knows your device ID can push code to your Poem/1.
-Owning the endpoint is the prerequisite for everything else. The design and its
-reasoning live in [`../docs/social-plan.md`](../docs/social-plan.md).
+authentication** — anyone who knows your device ID can push code to your device.
+This hub does authenticate (see the relay gate below), and owning the endpoint is
+the prerequisite for everything else. The design and its reasoning live in
+[`../docs/social-plan.md`](../docs/social-plan.md) and
+[`../docs/san.md`](../docs/san.md).
 
 ## Deploy
 
 ```sh
 npm install
-npm run gen-key | npx wrangler secret put HUB_PRIVATE_JWK   # OAuth client key
+# NOT `npm run gen-key |` — npm prints its banner to STDOUT, so the pipe
+# stores banner+JSON and the hub answers "HUB_PRIVATE_JWK is not valid JSON".
+node scripts/gen-key.mjs | npx wrangler secret put HUB_PRIVATE_JWK   # OAuth client key
 npx wrangler deploy                                         # -> <name>.<account>.workers.dev
 ```
 
@@ -49,6 +53,32 @@ printf '%s' "$TOKEN" | npx wrangler secret put HUB_ADMIN_TOKEN
 > name.
 
 ## Routes
+
+### The relay gate
+
+Everything under `/devices/` passes `src/device-gate.ts` **before** the relay
+router below, because upstream forwards those straight into the Durable Object
+and there is no seam inside it to hook without forking Resident.
+
+| Under `/devices/<id>` | Who may |
+|---|---|
+| `POST /send` | owner only — **this was the hole** |
+| WS `?monitor=1` | owner only; upstream broadcasts every relayed message to monitors, so it is a live read channel |
+| WS (device) | any **claimed** id |
+| `GET` (status) | owner only; a presence oracle otherwise |
+
+A hub carries only what its owner has claimed, so an unclaimed id gets nothing —
+that is what stops a hub being an open relay, in both directions. `POST /send`
+additionally requires the owner even for a claimed device.
+
+Passing this gate gets a socket, not trust. A device connection is then
+**challenged** by `src/device-agent.ts` and must sign a per-connection nonce
+with the key bound to that device; until it does, it receives nothing. So a
+claimed id opens a socket here and still gets no apps there.
+
+The split is deliberate: a gate is per-request and cannot hold the state a
+challenge-response needs, while the Durable Object owns the connection for its
+lifetime and can.
 
 ### Device relay (the canonical Resident protocol)
 
@@ -89,8 +119,14 @@ printf '%s' "$TOKEN" | npx wrangler secret put HUB_ADMIN_TOKEN
 | `POST /federation/push` 🔒 | push an app to a mutual's device |
 | `POST /federation/inbox` | receive one — authenticated by **signature**, not by owner |
 | `GET /federation/relationship/<who>` | are we mutuals |
-| `GET \| POST /hub/device` 🔒 | which device this hub relays to |
+| `GET /federation/probe/<who>` 🔒 | ask a mutual what they can accept — live, never cached |
+| `POST /federation/capabilities` | answer that question — **signature**-authenticated, mutuals only |
+| `POST /hub/devices/<id>/pair` 🔒 | open a pairing window to bind a device's key |
+| `GET \| POST /hub/devices` 🔒 | list / claim devices |
+| `DELETE /hub/devices/<id>` 🔒 | release one |
+| `GET \| POST /hub/device` 🔒 | which device inbound federation lands on |
 | `GET /hub/device/events` 🔒 | what that device has **said back** — see below |
+| `POST /hub/device/app` 🔒 | load an app onto **your own** device |
 
 🔒 = owner only. Send `Authorization: Bearer $HUB_ADMIN_TOKEN`, or use the browser
 session cookie from `/oauth/login`. A session is checked against the **current**
@@ -102,10 +138,40 @@ the sender's signature, and gating it would make federation impossible. That
 distinction — *hub-to-hub* auth versus *owner* auth — is the one to keep straight
 when adding routes.
 
-`POST /federation/push` takes `{to, code}` plus an optional `force`, which skips
-**this** hub's advisory mutual check. It cannot grant access — the recipient
-enforces independently — so it exists to make that independence observable
-instead of masked by the local check.
+`POST /federation/push` takes `{to}` plus **either** `{code}` (raw Lua) or
+`{app}` (a reference into a published library — see below), and an optional
+`force`, which skips **this** hub's advisory mutual check. `force` cannot grant
+access — the recipient enforces independently — so it exists to make that
+independence observable instead of masked by the local check.
+
+An `{app}` reference is resolved to source **here, before signing**. The wire
+format between hubs stays frozen at `{type, code}`, so a peer running older code
+sees no difference. Keep it that way: peers run hubs we cannot update, and every
+field added to that envelope is one this project is committing to forever.
+
+### App records
+
+| Route | |
+|---|---|
+| `GET /apps` | list your library |
+| `GET /apps?repo=<who>` | list **theirs** — no credential at all |
+| `POST /apps` 🔒 | publish or update `{name, code, description?}` |
+| `GET /apps/<ref>` | one app, source included |
+| `DELETE /apps/<rkey>` 🔒 | unpublish (your repo only) |
+
+An app is a record in its author's own atproto repo, `computer.haha.san.app`, keyed
+by a slug derived from its name — so re-publishing a name is an **edit** that
+mints a new CID. Note that a repo holds *current state*, not an archive: a
+superseded CID answers `RecordNotFound`, so versions are identifiable and
+change-detectable but not recoverable. A reference is `minute-clock` (yours),
+`alice.bsky.social/minute-clock` (hers), or a full `at://…` URI; the same grammar
+works in `/federation/push` and `/hub/device/app`.
+
+Reads are ungated on purpose. Repo records are public the moment they are
+published, so gating would protect nothing while breaking the property that
+matters: anyone can browse a builder's apps with no hub, no device and no
+account. Writes go through the owner's OAuth session, because the only repo this
+hub can write is its owner's.
 
 ### The device's return path
 
@@ -161,7 +227,14 @@ are not failures (an unconfigured hub should not look like a broken push path)
 but they are not passes either, and the suite used to exit 0 on a run that tested
 nothing at all.
 
-The positive case proves the machinery runs; the negative cases prove it says
+There are two positive cases. `mutual-push` sends raw Lua; `record-push`
+publishes an app to the sender's repo and pushes it **by reference**, then
+asserts the CID the sender reported is the one it published. That second case is
+also a guard on the wire format: it exercises app records against an *unchanged*
+recipient, so if it ever needs the receiving side updated to pass, records have
+leaked into the federation protocol.
+
+The positive cases prove the machinery runs; the negative cases prove it says
 no, which is the entire security claim. A hub that accepted everything would pass
 the positive test perfectly. The load-bearing case is `recipient-enforces`: it
 pushes from a non-mutual with `force`, so only the recipient's own answer
@@ -197,9 +270,17 @@ src/identity.ts           atproto resolution: handle -> DID -> PDS
 src/oauth.ts              client metadata + client key
 src/oauth-client.ts       @atproto/oauth-client wired for Workers
 src/oauth-routes.ts       login / callback / session / logout
+src/device-gate.ts        the relay gate — auth + claim check, ahead of upstream
+src/device-identity.ts    per-device keys: challenge, verify, pairing window
+src/capabilities.ts       device profiles, for mutuals probing what we accept
+src/devices.ts            the device registry: claim, release, list, default
 src/hub-key.ts            federation signing key
+src/pds.ts                XRPC to a PDS: authenticated (session) and public
 src/hub-record.ts         the hub record: read, publish, delete, discover
 src/hub-routes.ts         hub record + peer discovery routes
+src/app-record.ts         app records: publish, read, list, delete, ref parsing
+src/app-routes.ts         the app library, and the shared reference resolver
+src/lexicon.ts            the published schemas, and whether they resolve
 src/federation.ts         signing, verification, mutual-follow checks
 src/federation-routes.ts  push and inbox
 scripts/gen-key.mjs       generate the OAuth client key (WebCrypto, no deps)

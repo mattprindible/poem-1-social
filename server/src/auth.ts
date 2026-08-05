@@ -24,7 +24,7 @@ import { NS, OWNER_ITEM, hubStore } from "./hub-store"
 // Bearer auth is only enabled when HUB_ADMIN_TOKEN is set, so a hub that never
 // sets one is cookie-only rather than accidentally open.
 
-const COOKIE_NAME = "poem1_hub_session"
+const COOKIE_NAME = "san_hub_session"
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 export class AuthError extends Error {

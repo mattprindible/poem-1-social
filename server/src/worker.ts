@@ -13,6 +13,8 @@ import { HubStore } from "./hub-store"
 import { routeOAuthRequest } from "./oauth-routes"
 import { routeHubIdentityRequest } from "./hub-routes"
 import { routeFederationRequest } from "./federation-routes"
+import { routeAppRequest } from "./app-routes"
+import { gateDeviceRequest } from "./device-gate"
 
 // Cloudflare needs the Durable Object classes re-exported at the worker entry
 // so it can instantiate them for the bindings declared in wrangler.jsonc.
@@ -78,7 +80,15 @@ async function routeHubRequest(request: Request, env: Env): Promise<Response | n
 
 export default {
   async fetch(request: Request, env: Env) {
-    // Device protocol first: it owns /devices/* and GET /, the latter because
+    // The relay gate comes FIRST, ahead of the device protocol it protects.
+    // Everything under /devices/ is forwarded straight into the Durable Object,
+    // so there is no seam inside upstream's router to hook — the check has to
+    // happen before it, or not at all. Returns null when the request is
+    // allowed; it can only ever refuse. See device-gate.ts.
+    const refused = await gateDeviceRequest(request, env)
+    if (refused) return refused
+
+    // Device protocol: it owns /devices/* and GET /, the latter because
     // Courier reads the HTTP Date header there as its time-sync fallback.
     const res = await routeDeviceRequest(request, env.DeviceAgent)
     if (res) return res
@@ -94,6 +104,9 @@ export default {
 
     const hubIdentity = await routeHubIdentityRequest(request, env)
     if (hubIdentity) return hubIdentity
+
+    const apps = await routeAppRequest(request, env)
+    if (apps) return apps
 
     return new Response("Not found", { status: 404 })
   },

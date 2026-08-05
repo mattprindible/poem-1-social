@@ -23,14 +23,55 @@ asymmetric follow is the relationship a sloppy graph check gets wrong, because
 `followedBy: true` looks like a connection. [`test-federation.sh`](../test-federation.sh)
 runs the whole thing — push and refusals — as one command.
 
-What does NOT exist yet: apps as records, weak-tie discovery, and any of the
-onboarding work.
+**Apps are records as of 2026-08-05.** An app is now published into its author's
+own repo as `computer.haha.san.app`, and the federation suite's `record-push` case
+proves the round trip: a record published to one account's repo, pushed to
+another account's device *by reference*, and compiled there — verified by the
+device's own telemetry, not by the relay's 200. Listing someone else's library
+is an unauthenticated read of their PDS, so discovery needs no hub and no
+account.
 
-**Namespace note:** records use `is.mfd.poem1.*`, under a domain the hub owner
-controls. `tech.inanimate.*` would be the natural long-term home given Poem/1 and
-Resident are both Matt Webb's, but claiming a namespace on someone else's domain
-before asking is not ours to do. Migration is cheap while few records exist — it
-is one of the reasons to have that courtesy conversation early.
+What does NOT exist yet: **weak-tie discovery** — finding apps through
+followers-of-followers — and any of the onboarding work.
+
+Do not confuse that with the capability probing built on 2026-08-05: that asks a
+**mutual's hub** what hardware shape it can accept, so a sender knows what to
+push. Weak-tie discovery is a different question (whose *apps* can I find?),
+answered by reading repos rather than by asking hubs, and it is still unbuilt.
+
+**Stepping back, 2026-08-05.** Reviewing the code against the concept turned up
+two things it had assumed rather than chosen: a hub carries exactly one device,
+and the record types were named after one person's handle and one board. Both
+are now corrected — the definition of a hub, the `computer.haha.san.*`
+namespace, and the migration are in [`san.md`](san.md).
+
+That review also found the **direct relay path was unauthenticated**, which was
+the most serious thing in the project and is now closed — see "Push is the only
+write path" below. Worth noting how it was found: not by a test or a report, but
+by writing down what a hub *is* and checking the code against it. The hole had
+been there since the first hub existed.
+
+**The trust chain is now proved end to end** (2026-08-05), with every link
+demonstrated rather than assumed:
+
+| Link | Proved by |
+|---|---|
+| the device is that device | a P-256 key it generates and never sends, signing a per-connection challenge |
+| the hub is yours | the device is *claimed*, and pushing needs an owner credential |
+| the peer is who they say | a signature against the key in *their* repo |
+| they may push at all | a mutual follow, enforced by the recipient |
+| what they can push to | a live capability probe, never a remembered belief |
+
+`test-federation.sh` asserts all five, 9/9. The device work is in
+[`san.md`](san.md).
+
+**Namespace — SETTLED AND MIGRATED 2026-08-05.** Records moved from
+`is.mfd.poem1.*` to `computer.haha.san.*`, under the authority
+`san.haha.computer`, whose schemas are published and resolve. The old namespace
+was wrong on two independent axes: it carried a *personal handle*, and it named
+*one board* in a type that describes a sandbox app. See [`san.md`](san.md) for the reasoning and the staged migration.
+`tech.inanimate.*` remains not ours to claim without asking; the same courtesy
+now also keeps "Resident" out of every NSID, URL and wire identifier.
 Supersedes the earlier "self-hosted Worker" napkin sketch (auth + error feedback),
 which was two chores bundled together rather than a design.
 
@@ -55,8 +96,26 @@ Identity and the social graph come from **AT Protocol** (Bluesky accounts).
 | Weak tie | Follower-of-follower | **Discovery only** — their apps appear when you search. No write access, ever. |
 
 Push is the only write path, and only mutuals have it. Everything a weak tie
-offers you, *you* pull. Nothing unbidden reaches your hardware from outside your
-mutuals.
+offers you, *you* pull.
+
+> **TRUE AS OF 2026-08-05 — and it was not, for weeks before that.** The
+> *federated* path always enforced it (signature plus mutual check, refusals
+> proven). The **direct relay path authenticated nothing**: `POST
+> /devices/<id>/send` with no credential returned 200 against the live hub, and
+> hub URLs are public by design while device IDs are printed on the device's
+> screen. The sentence above was written to describe the design and got read as
+> a description of the system.
+>
+> Closed by the device gate ([`san.md`](san.md)): pushing requires the owner,
+> and a hub carries only devices its owner has **claimed**. The suite's
+> `relay-closed` case asserts both halves so it cannot silently reopen.
+>
+> **And the device now proves it is the device** (2026-08-05, verified on
+> hardware): it holds a P-256 key generated on first boot and signs a
+> per-connection challenge. An impostor attached to the same device ID alongside
+> the real Poem/1 received zero frames while the device compiled the push.
+> Device-side *mechanism* is unaffected throughout — sandbox, driver allowlist,
+> flip limits and hold-to-stop hold against a hostile push from any source.
 
 Social trust changes **policy** (who may push), never **mechanism** (what pushed
 code can do). The Lua sandbox, driver allowlists, and e-ink flip rate limits stay
@@ -66,12 +125,21 @@ exfiltrated Wi-Fi credentials.
 ## Topology
 
 ```
-your device ⇄ (WSS) ⇄ your hub ⇄ (HTTPS) ⇄ their hub ⇄ (WSS) ⇄ their device
+your devices ⇄ (WSS) ⇄ your hub ⇄ (HTTPS) ⇄ their hub ⇄ (WSS) ⇄ their devices
 ```
 
 Each person runs their own hub (a Cloudflare Worker + Durable Object). A device
-only ever holds a socket to its **owner's** hub. Federation is ordinary HTTPS
-between two public endpoints — no NAT traversal, no P2P, no rendezvous server.
+only ever holds a socket to its **owner's** hub.
+
+Federation is ordinary HTTPS between two public endpoints — no NAT traversal,
+no P2P, no rendezvous server.
+
+> **A hub carries MANY devices — one owner, N devices**, and only devices its
+> owner has explicitly **claimed**. Built 2026-08-05; before that a hub held a
+> single device pointer that gated nothing, an unexamined convenience from the
+> days of one person and one Poem/1. Resident runs on ESP32 boards generally and
+> this repo already has a second device. Definition and cardinalities:
+> [`san.md`](san.md).
 
 The hub's job is deliberately small: hold the device socket, relay pushes, verify
 inbound requests. **Discovery does not involve the hub at all.**
@@ -79,7 +147,7 @@ inbound requests. **Discovery does not involve the hub at all.**
 ## Identity, discovery, and revocation: one record
 
 Trust is anchored in a record the owner publishes in their own atproto repo — say
-`is.mfd.poem1.hub` — containing the hub's **endpoint URL** and its
+`computer.haha.san.hub` — containing the hub's **endpoint URL** and its
 **public key**.
 
 Each hub generates its own keypair and signs its own outbound requests. A
@@ -116,10 +184,42 @@ PLC could support extra service entries eventually, but regular users can't edit
 their `did:plc` document directly today, and `did:web` would mean self-hosting
 identity. The repo record is available to everyone right now.
 
-## Apps are records too
+## Apps are records too — BUILT and verified 2026-08-05
 
 Apps are **durable artifacts, not throwaway pushes**. An app is an atproto record
-(`is.mfd.poem1.app`) holding the Lua source plus metadata.
+(`computer.haha.san.app`) holding the Lua source plus metadata.
+
+The record key is derived from the app's **name**, not a random TID. That is the
+decision the rest of this section rests on: re-publishing the same name is an
+*edit* that mints a new CID, and an app is referable as `handle/name` with no
+lookup table. The cost is that renaming creates a new app and orphans the old
+key — correct, on balance, since the rkey is the app's identity.
+
+**A repo is not an archive** (verified against a live PDS, 2026-08-05). Asking
+for a superseded CID returns `RecordNotFound`; the `cid` parameter on
+`getRecord` is a *precondition check* — "is this still the version I expect" —
+not a way back to an old one. Versions are therefore identifiable and
+change-detectable but **not recoverable from the network**. Anyone who wants to
+run an exact past version must have kept a copy. This was assumed the other way
+round when the section was first written, and it constrains pinning directly.
+
+**References resolve sender-side, and that is the load-bearing constraint.**
+`/federation/push` takes `{app}` as well as `{code}`, but the sending hub turns
+the reference into Lua *before* it signs anything, so the wire format stays
+frozen at `{type, code}`. Peers run hubs we cannot update; every field added
+there is one we would be committing to support forever. A recipient on older hub
+code cannot tell a record push from a raw one, because there is no difference —
+and `record-push` in the suite exists to keep it that way. If that case ever
+needs the *recipient* changed to pass, app records have leaked into the
+federation protocol.
+
+Whether the recipient *should* learn what landed on their device — name, author,
+CID — is a real and separate question, tangled up with update semantics below.
+It is not settled, so it is not shipped.
+
+`apps.sh` is the CLI (`publish`, `list`, `show`, `info`, `run`, `push`,
+`delete`). `send-app.sh` is untouched and still the file-and-a-cable path: it
+needs no login, which is exactly why it stays.
 
 This gives, for free: authorship and provenance (records are signed), versioning
 and history (CIDs, rkeys, timestamps), updates as record updates, and portability
@@ -204,11 +304,32 @@ at once. Cache aggressively; treat the graph as advisory state, not live truth.
    until he chooses again. *Leaning: pin by default, surface updates as something
    you accept.* Not obvious — "your friend fixed a bug and your clock silently got
    better" is a genuinely nice property to give up.
+
+   *Still open, but no longer abstract:* records now have CIDs, and a push
+   resolves a reference at send time and reports the exact CID it sent (the
+   suite asserts that report matches what was published, so it is a trustworthy
+   input rather than a claim). What is missing is anywhere to PUT a pin. A
+   pinned app is state on the recipient's side, and nothing on the device or in
+   its hub currently remembers which version of whose app it is running. That is
+   the next piece of this decision, not another round of arguing the default.
+
+   *And a pin cannot mean what it first sounds like.* Because superseded CIDs
+   are unreachable (above), "pin to a CID" can only mean **detect that it
+   changed and decline** — it cannot mean "keep fetching the version I chose",
+   because that version is gone from the network the moment the author edits.
+   Honouring a pin across a reboot therefore requires the recipient to STORE the
+   Lua, not just the CID. That is a much larger commitment than it looked, and
+   it argues for framing the feature as *consent to updates* rather than as
+   version control.
 2. **Moderation / blocking.** Mutual-follow is a weak proxy for tie strength;
    people mutual-follow strangers. Revocation and per-person blocking need to be
    first-class, not an afterthought.
-3. **Local app identity.** `send-app.sh` is file-based and ephemeral — no name,
-   version, or author. Durable apps mean the daily loop has to change too.
+3. **Local app identity — SETTLED 2026-08-05.** `send-app.sh` was file-based and
+   ephemeral: no name, version, or author. The answer turned out not to be
+   changing it. `send-app.sh` keeps doing exactly what it did, because a path
+   that needs no login is worth having while you iterate with a cable; `apps.sh`
+   is the second loop, for apps that have a name and a home. Two loops, chosen
+   per task, rather than one loop made heavier for everybody.
 4. **Hosted hub for onboarding?** Running a hub others can point at lowers the
    entry cliff. Because identity is a DID and the endpoint is a record they
    control, self-hosting later is a record update, not a migration — so a hub is

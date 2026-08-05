@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 #
-# test-federation.sh — Prove the federated push path end to end, in one command.
+# test-federation.sh — Prove the whole trust chain end to end, in one command.
 #
 #   sender's hub  ──signed HTTPS──▶  recipient's hub  ──WSS──▶  recipient's device
+#
+# It began as a test of the federated push and now covers every link in that
+# chain, because each one is only worth anything if the others hold:
+#
+#   the device is that device      device-identity  (a key it proves per connection)
+#   the hub is its owner's         relay-closed     (claimed devices, owner-only push)
+#   the peer is who they claim     mutual-push      (signature vs the key in their repo)
+#   they are allowed to push       recipient-enforces (mutual follow, recipient decides)
+#   what they can push to          discovery        (asked live, never remembered)
 #
 # This is the most important path in the project and structurally the least
 # testable one: it needs multiple atproto identities, deployed hubs, real follow
@@ -55,15 +64,16 @@
 # HUB_ADMIN_TOKEN exists, never its value. A token you did not record is gone.
 # So record it ONCE, in the keychain, instead of rotating it every run:
 #
-#   W=poem1-hub-haha
+#   W=idiot-hub
 #   TOKEN="$(openssl rand -hex 32)"
 #   security add-generic-password -a "$W" -s poem1-hub-admin -w "$TOKEN"
 #   printf '%s' "$TOKEN" | (cd server && npx wrangler secret put HUB_ADMIN_TOKEN --name "$W")
 #
 # This script looks each hub's token up by worker name, so adding a hub is
-# adding a keychain entry. You do NOT need an OAuth browser session to run any
-# of this — OAuth is only for CLAIMING a hub and publishing its record, which is
-# a one-time act per identity.
+# adding a keychain entry. A token is enough for every case EXCEPT `record-push`,
+# which publishes an app into the sender's repo and so needs that hub to still
+# hold a live OAuth session. Sessions lapse; that case skips when it has, rather
+# than reporting a federation failure for a login problem.
 #
 # Requires: curl, jq.
 
@@ -73,27 +83,45 @@ set -euo pipefail
 # Three identities with deliberately different relationships to the device
 # owner, because one mutual proves nothing on its own:
 #
-#   mfd.is                    owns the DEVICE. The recipient in every case.
-#   hahacomputer.bsky.social  MUTUAL with mfd.is  -> may push.
-#   idiot.town                follows mfd.is, NOT followed back -> may not.
+#   mfd.is                   owns the DEVICE. The recipient in every case.
+#   idiot.town               MUTUAL with mfd.is  -> may push.
+#   noitsrusty.bsky.social   follows mfd.is, NOT followed back -> may not.
 #
-# idiot.town is the interesting one. A follower is not a mutual, and it is the
-# relationship most likely to be got wrong by a sloppy graph check: it looks
+# The non-mutual is the interesting one. A follower is not a mutual, and it is
+# the relationship most likely to be got wrong by a sloppy graph check: it looks
 # like a connection, and `followedBy: true` is exactly what a naive
 # implementation would accept.
+#
+# Rusty exists ONLY to be refused. That is a real fixture, not a spare account:
+# the negative cases are the whole security claim, and they need a sender holding
+# the awkward relationship on purpose and permanently. Do not "tidy up" by
+# following it back — that silently converts the load-bearing refusal test into
+# a second copy of the positive one.
+#
+# It needs a hub of its own even though it never succeeds, because
+# /federation/push resolves the recipient's hub record BEFORE the mutual check —
+# a sender with no hub record fails at `no_hub` and never exercises the graph
+# logic the case exists to test.
+#
+# Note who is NOT here: san.haha.computer is the lexicon AUTHORITY and holds no
+# follows in either direction. It briefly stood in as this fixture and should
+# not again — the authority is not a participant.
 OWNER_HANDLE="${POEM1_OWNER_HANDLE:-mfd.is}"
 
-OWNER_HUB="${POEM1_OWNER_HUB:-https://poem1-hub.service-cloudflare-442.workers.dev}"
-OWNER_WORKER="${POEM1_OWNER_WORKER:-poem1-hub}"
+OWNER_HUB="${POEM1_OWNER_HUB:-https://mfd-hub.service-cloudflare-442.workers.dev}"
+OWNER_WORKER="${POEM1_OWNER_WORKER:-mfd-hub}"
 
-MUTUAL_HUB="${POEM1_MUTUAL_HUB:-https://poem1-hub-haha.service-cloudflare-442.workers.dev}"
-MUTUAL_WORKER="${POEM1_MUTUAL_WORKER:-poem1-hub-haha}"
+# The mutual needed no handle until discovery: it only ever SENT, and a sender
+# is identified by the DID in its signature. Probing runs the other way.
+MUTUAL_HANDLE="${POEM1_MUTUAL_HANDLE:-idiot.town}"
+MUTUAL_HUB="${POEM1_MUTUAL_HUB:-https://idiot-hub.service-cloudflare-442.workers.dev}"
+MUTUAL_WORKER="${POEM1_MUTUAL_WORKER:-idiot-hub}"
 
 # The non-mutual sender. Unset/undeployed until someone stands it up, so the
 # cases that need it SKIP loudly rather than silently not running.
-STRANGER_HANDLE="${POEM1_STRANGER_HANDLE:-idiot.town}"
-STRANGER_HUB="${POEM1_STRANGER_HUB:-https://poem1-hub-idiot.service-cloudflare-442.workers.dev}"
-STRANGER_WORKER="${POEM1_STRANGER_WORKER:-poem1-hub-idiot}"
+STRANGER_HANDLE="${POEM1_STRANGER_HANDLE:-noitsrusty.bsky.social}"
+STRANGER_HUB="${POEM1_STRANGER_HUB:-https://rusty-hub.service-cloudflare-442.workers.dev}"
+STRANGER_WORKER="${POEM1_STRANGER_WORKER:-rusty-hub}"
 
 # A handle that cannot resolve, for the discovery-failure case. Deliberately
 # .invalid (RFC 2606) so it can never start resolving and quietly stop testing
@@ -108,7 +136,7 @@ verbose=0
 
 # Every case name, so --only can reject a typo instead of matching nothing and
 # reporting a green "passed 0". Keep in step with the `wanted` calls below.
-CASES="mutual-push bad-token unknown-handle sender-warns recipient-enforces"
+CASES="mutual-push record-push relay-closed device-identity discovery bad-token unknown-handle sender-warns recipient-enforces"
 
 usage() {
   sed -n '2,60p' "$0" >&2
@@ -125,6 +153,31 @@ Cases, in the order they run:
                        Needs: keychain token for $MUTUAL_WORKER, device online.
                        Also a token for $OWNER_WORKER to check the compile —
                        without it the case passes on delivery alone and says so.
+
+  record-push          POSITIVE. Same path as mutual-push, but the app is
+                       PUBLISHED to the sender's repo first and pushed by
+                       reference — proving a record round-trips to hardware and
+                       that the wire format did not change to allow it.
+                       Needs: token for $MUTUAL_WORKER AND a live OAuth session
+                       on that hub (publishing writes their repo). Skips, not
+                       fails, when the session has lapsed.
+
+  relay-closed         THE FRONT DOOR. An unauthenticated POST to
+                       /devices/<id>/send must be refused, and an unclaimed
+                       device id must get nothing even WITH the owner token.
+                       Needs: token for $OWNER_WORKER.
+
+  device-identity      A paired device cannot be impersonated: the wrong key is
+                       refused, and staying SILENT (never answering the
+                       challenge) receives nothing. Uses tools/fake-device.mjs
+                       against a scratch device id — never your real hardware.
+                       Needs: token for $OWNER_WORKER, node 22+.
+
+  discovery            A mutual can ask what this hub accepts and gets device
+                       PROFILES — never ids, names or counts. A non-mutual is
+                       refused. Duplicate devices must collapse, or the answer
+                       becomes a device count.
+                       Needs: token for $OWNER_WORKER and $MUTUAL_WORKER, node.
 
   bad-token            The sender rejects a wrong owner credential (401/403).
                        Needs: nothing.
@@ -191,6 +244,30 @@ push() {  # hub token to force
   local hub="$1" token="$2" to="$3" force="$4" payload
   payload=$(jq -n --arg to "$to" --arg code "$(cat "$APP_FILE")" --argjson f "$force" \
     '{to: $to, code: $code} + (if $f == 1 then {force: true} else {} end)')
+  curl -sS -o "$BODY" -w "%{http_code}" -X POST \
+    -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+    --data-binary "$payload" --max-time 60 "${hub%/}/federation/push"
+}
+
+# Publish an app into a hub owner's own repo. Returns the HTTP status; body in
+# $BODY. Needs a LIVE OAuth session on that hub, not just an owner token — this
+# writes the owner's atproto repo, which the hub can only do on their behalf.
+publish_app() {  # hub token name file
+  local hub="$1" token="$2" name="$3" file="$4" payload
+  payload=$(jq -n --arg name "$name" --arg code "$(cat "$file")" \
+    --arg desc "published by test-federation.sh" \
+    '{name: $name, code: $code, description: $desc}')
+  curl -sS -o "$BODY" -w "%{http_code}" -X POST \
+    -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+    --data-binary "$payload" --max-time 60 "${hub%/}/apps"
+}
+
+# Push by REFERENCE rather than by value: the sender resolves the record to Lua
+# before anything leaves its hub, so the recipient sees the identical {type,
+# code} it has always seen.
+push_ref() {  # hub token to ref
+  local hub="$1" token="$2" to="$3" ref="$4" payload
+  payload=$(jq -n --arg to "$to" --arg app "$ref" '{to: $to, app: $app}')
   curl -sS -o "$BODY" -w "%{http_code}" -X POST \
     -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
     --data-binary "$payload" --max-time 60 "${hub%/}/federation/push"
@@ -295,7 +372,234 @@ if wanted mutual-push; then
   fi
 fi
 
-# ── 2. A wrong credential is refused ─────────────────────────────────────────
+# ── 2. The same push, but the app is a RECORD ────────────────────────────────
+# mutual-push proves Lua reaches hardware. This proves the app can be a durable,
+# named, authored thing on the way there — published to the sender's repo, then
+# pushed by reference and compiled on someone else's device.
+#
+# The load-bearing assertion is the quiet one: the recipient is unchanged. The
+# sender resolves the record to source BEFORE signing, so the wire stays frozen
+# at {type, code} and a peer running older hub code cannot tell the difference.
+# If this case ever needs the recipient updated to pass, app records will have
+# leaked into the federation protocol — which is exactly what the resolve-first
+# design exists to prevent.
+if wanted record-push; then
+  tok=$(token_for "$MUTUAL_WORKER")
+  if [[ -z "$tok" ]]; then
+    report SKIP record-push "no token for $MUTUAL_WORKER (see header)"
+  else
+    code=$(publish_app "$MUTUAL_HUB" "$tok" "fed-probe" "$APP_FILE")
+    if [[ "$code" != "200" ]]; then
+      # An expired OAuth session is a setup problem on that hub, not a broken
+      # push path — the owner has to re-login in a browser. Skipping keeps it
+      # from reading as a federation regression.
+      # Not necessarily JSON: a hub still on code without /apps answers with a
+      # plain-text 404, and a jq error there would obscure the actual reason.
+      why=$(jq -r '.message // .error // empty' < "$BODY" 2>/dev/null || true)
+      [[ -z "$why" ]] && why="HTTP $code — $MUTUAL_WORKER may predate app records; deploy it"
+      report SKIP record-push "could not publish to $MUTUAL_WORKER's repo: $why"
+    else
+      ref=$(jq -r '.rkey' < "$BODY")
+      cid=$(jq -r '.cid' < "$BODY")
+
+      owner_tok=$(token_for "$OWNER_WORKER")
+      seq_before=$(latest_seq "$OWNER_HUB" "$owner_tok")
+
+      code=$(push_ref "$MUTUAL_HUB" "$tok" "$OWNER_HANDLE" "$ref")
+      delivered=$(jq -r '.response.delivered // false' < "$BODY")
+      sent_cid=$(jq -r '.app.cid // ""' < "$BODY")
+
+      if [[ "$code" != "200" || "$delivered" != "true" ]]; then
+        report FAIL record-push "push by reference failed: HTTP $code, error=$(err_of)"
+      elif [[ "$sent_cid" != "$cid" ]]; then
+        # The response must name the version that actually went. Without this,
+        # "pin an app by CID" (docs/social-plan.md, open decision 1) has no
+        # trustworthy input, because the sender's report of WHAT it sent would
+        # be unverified.
+        report FAIL record-push "pushed cid '$sent_cid' is not the published '$cid'"
+      elif [[ -z "$seq_before" ]]; then
+        report PASS record-push "record $ref delivered (compile UNVERIFIED — no token for $OWNER_WORKER)"
+      else
+        verdict=$(compile_verdict "$OWNER_HUB" "$owner_tok" "$seq_before")
+        case "$verdict" in
+          compiled) report PASS record-push "published record $ref pushed by reference and compiled ON the device" ;;
+          error:*)  report FAIL record-push "delivered but FAILED to compile: ${verdict#error:}" ;;
+          *)        report FAIL record-push "delivered but device never reported compiling it" ;;
+        esac
+      fi
+    fi
+  fi
+fi
+
+# ── 3. The relay's front door is shut ────────────────────────────────────────
+# The federated path was authenticated for weeks while the relay beside it was
+# not: POST /devices/<id>/send with NO credential returned 200 on a live hub.
+# Hub URLs are published in atproto repos by design and device ids are printed
+# on the device's own screen, so every claim about mutuals being the only
+# writers was false at the front door.
+#
+# Two assertions, because the fix has two halves and either alone is a hole:
+#   1. no credential          -> refused
+#   2. owner credential, but an id this hub does not carry -> still refused,
+#      or the hub is an open relay onto other people's devices for its owner.
+if wanted relay-closed; then
+  tok=$(token_for "$OWNER_WORKER")
+  dev=$(curl -sS -m 20 -H "Authorization: Bearer $tok" "${OWNER_HUB%/}/hub/device" \
+        | jq -r '.deviceId // ""' 2>/dev/null)
+  if [[ -z "$tok" ]]; then
+    report SKIP relay-closed "no token for $OWNER_WORKER"
+  elif [[ -z "$dev" ]]; then
+    report SKIP relay-closed "$OWNER_WORKER has no device claimed"
+  else
+    # A payload the runtime ignores: this must prove the door is shut without
+    # betting that it is. If the gate were open, a real app would land on the
+    # panel, so the probe is deliberately inert.
+    probe='{"channel":"system","type":"relay-probe-ignore-me"}'
+    anon=$(curl -sS -o "$BODY" -w "%{http_code}" -m 20 -X POST \
+      -H "Content-Type: application/json" --data-binary "$probe" \
+      "${OWNER_HUB%/}/devices/$dev/send")
+
+    unclaimed=$(curl -sS -o /dev/null -w "%{http_code}" -m 20 -X POST \
+      -H "Authorization: Bearer $tok" -H "Content-Type: application/json" \
+      --data-binary "$probe" "${OWNER_HUB%/}/devices/definitelynotaclaimeddevice/send")
+
+    if [[ "$anon" == "200" ]]; then
+      report FAIL relay-closed "ANYONE CAN PUSH TO THIS DEVICE — relay is open (HTTP 200, no credential)"
+    elif [[ "$anon" != "401" && "$anon" != "403" ]]; then
+      report FAIL relay-closed "expected 401/403 for an anonymous push, got $anon"
+    elif [[ "$unclaimed" == "200" ]]; then
+      report FAIL relay-closed "hub relayed to an UNCLAIMED device id — it is an open relay"
+    elif [[ "$unclaimed" != "404" && "$unclaimed" != "403" ]]; then
+      report FAIL relay-closed "expected 404/403 for an unclaimed id, got $unclaimed"
+    else
+      report PASS relay-closed "anonymous push refused ($anon); unclaimed id refused ($unclaimed)"
+    fi
+  fi
+fi
+
+# ── 4. A paired device cannot be impersonated ────────────────────────────────
+# The relay gate proves an UNCLAIMED id gets nothing. This proves a CLAIMED one
+# cannot be worn by someone who merely knows it — which is the whole difference
+# between "the hub carries my device" and "the hub carries whoever says they are
+# my device". Device ids are printed on the device's own screen, so knowing one
+# is not evidence of anything.
+#
+# Runs against a scratch id that is claimed, paired and released here. It never
+# touches real hardware — impersonating your actual device would mean racing the
+# thing you depend on.
+#
+# The silent case is the one worth having. An impostor need not fail the
+# challenge; it can simply never answer, staying attached and unverified. If
+# delivery were gated on "not refused" rather than on "proved", silence would be
+# the easiest bypass in the system and every other assertion here would pass.
+if wanted device-identity; then
+  tok=$(token_for "$OWNER_WORKER")
+  rig="suiterig$$"
+  if [[ -z "$tok" ]]; then
+    report SKIP device-identity "no token for $OWNER_WORKER"
+  elif ! command -v node >/dev/null 2>&1; then
+    report SKIP device-identity "node not available"
+  else
+    api() { curl -sS -m 20 -o "$BODY" -w "%{http_code}" -H "Authorization: Bearer $tok" "$@"; }
+    rm -f "/tmp/fake-device-$rig.jwk"
+    api -X POST -H "Content-Type: application/json" \
+      --data-binary "{\"deviceId\":\"$rig\"}" "${OWNER_HUB%/}/hub/devices" >/dev/null
+    api -X POST "${OWNER_HUB%/}/hub/devices/$rig/pair" >/dev/null
+
+    host="${OWNER_HUB#*://}"; host="${host%%/*}"
+    bound=$(node tools/fake-device.mjs "$host" "$rig" 2>/dev/null | tail -1)
+    impostor=$(node tools/fake-device.mjs "$host" "$rig" --wrong-key 2>/dev/null | tail -1)
+
+    # Silent impostor: attach, answer nothing, and see whether a push reaches it.
+    silent=$(node -e '
+      const [h,d,t]=process.argv.slice(1);
+      const ws=new WebSocket(`wss://${h}/devices/${d}`); let got=[];
+      ws.onmessage=e=>got.push(e.data);
+      ws.onopen=()=>setTimeout(async()=>{
+        const r=await fetch(`https://${h}/devices/${d}/send`,{method:"POST",
+          headers:{"Content-Type":"application/json","Authorization":`Bearer ${t}`},
+          body:JSON.stringify({channel:"system",type:"suite-probe"})});
+        console.log(`${r.status} ${got.filter(f=>!f.includes("identify")).length}`);
+        process.exit(0);
+      },3000);
+      setTimeout(()=>{console.log("timeout 0");process.exit(0)},15000);
+    ' "$host" "$rig" "$tok" 2>/dev/null | tail -1)
+
+    api -X DELETE "${OWNER_HUB%/}/hub/devices/$rig" >/dev/null
+    rm -f "/tmp/fake-device-$rig.jwk"
+
+    if [[ "$bound" != *"state=bound"* ]]; then
+      report FAIL device-identity "pairing did not bind a key: $bound"
+    elif [[ "$impostor" != *"does not match"* ]]; then
+      report FAIL device-identity "AN IMPOSTOR KEY WAS ACCEPTED — device identity is decorative: $impostor"
+    elif [[ "$silent" == "200 "* ]]; then
+      report FAIL device-identity "A SILENT IMPOSTOR RECEIVED A PUSH — staying quiet bypasses identity"
+    elif [[ "$silent" != "503 0" ]]; then
+      report FAIL device-identity "expected '503 0' for the silent impostor, got '$silent'"
+    else
+      report PASS device-identity "wrong key refused; silent impostor got 503 and zero frames"
+    fi
+  fi
+fi
+
+# ── 5. The network answers questions about itself ────────────────────────────
+# Discovery is a live question, never a cached belief: someone retires a board or
+# adds one, and a remembered answer keeps being acted on with confidence long
+# after it stopped being true.
+#
+# The assertions are as much about what is NOT returned. A device id is a
+# credential on the relay, so discovery must never become the thing that moves
+# one between hubs — and a list that did not deduplicate would be a device count,
+# which is nobody's business either. Two identical devices, one profile.
+if wanted discovery; then
+  otok=$(token_for "$OWNER_WORKER"); mtok=$(token_for "$MUTUAL_WORKER")
+  a="disco$$a"; b="disco$$b"
+  if [[ -z "$otok" || -z "$mtok" ]]; then
+    report SKIP discovery "need tokens for both $OWNER_WORKER and $MUTUAL_WORKER"
+  elif ! command -v node >/dev/null 2>&1; then
+    report SKIP discovery "node not available"
+  else
+    mhost="${MUTUAL_HUB#*://}"; mhost="${mhost%%/*}"
+    for d in "$a" "$b"; do
+      curl -sS -m 20 -o /dev/null -H "Authorization: Bearer $mtok" -H "Content-Type: application/json" \
+        -X POST --data-binary "{\"deviceId\":\"$d\"}" "${MUTUAL_HUB%/}/hub/devices"
+      curl -sS -m 20 -o /dev/null -H "Authorization: Bearer $mtok" \
+        -X POST "${MUTUAL_HUB%/}/hub/devices/$d/pair"
+      rm -f "/tmp/fake-device-$d.jwk"
+      # Both claim to be the SAME board: the dedup assertion below is the point.
+      node tools/fake-device.mjs "$mhost" "$d" --type suitesim --screen 111x222 >/dev/null 2>&1
+    done
+
+    code=$(curl -sS -o "$BODY" -w "%{http_code}" -m 30 -H "Authorization: Bearer $otok" \
+      "${OWNER_HUB%/}/federation/probe/$MUTUAL_HANDLE")
+    sims=$(jq -r '[.response.profiles[]? | select(.deviceType=="suitesim")] | length' < "$BODY" 2>/dev/null)
+    leaked=$(jq -r '[.response.profiles[]? | keys[]] | unique | join(",")' < "$BODY" 2>/dev/null)
+
+    # And a non-mutual must not be able to ask at all.
+    refused=$(curl -sS -o /dev/null -w "%{http_code}" -m 30 -H "Authorization: Bearer $otok" \
+      "${OWNER_HUB%/}/federation/probe/$STRANGER_HANDLE")
+
+    for d in "$a" "$b"; do
+      curl -sS -m 20 -o /dev/null -X DELETE -H "Authorization: Bearer $mtok" \
+        "${MUTUAL_HUB%/}/hub/devices/$d"
+      rm -f "/tmp/fake-device-$d.jwk"
+    done
+
+    if [[ "$code" != "200" ]]; then
+      report FAIL discovery "probing a mutual failed: HTTP $code"
+    elif [[ "$sims" != "1" ]]; then
+      report FAIL discovery "two identical devices produced $sims profile(s) — the answer is a device COUNT"
+    elif [[ "$leaked" == *"deviceId"* || "$leaked" == *"name"* || "$leaked" == *"key"* ]]; then
+      report FAIL discovery "PROFILES LEAKED IDENTITY: fields were $leaked"
+    elif [[ "$refused" == "200" ]]; then
+      report FAIL discovery "a NON-MUTUAL answered a capabilities probe"
+    else
+      report PASS discovery "mutual described by shape only ($leaked); non-mutual refused ($refused)"
+    fi
+  fi
+fi
+
+# ── 6. A wrong credential is refused ─────────────────────────────────────────
 # Cheap, but it guards a real hole: without requireOwner, anyone knowing the hub
 # URL could make it push to every one of its owner's mutuals, signed as them.
 # Hub URLs are published in atproto repos, so they are public by design.
@@ -308,7 +612,7 @@ if wanted bad-token; then
   fi
 fi
 
-# ── 3. Discovery fails cleanly ───────────────────────────────────────────────
+# ── 7. Discovery fails cleanly ───────────────────────────────────────────────
 if wanted unknown-handle; then
   tok=$(token_for "$MUTUAL_WORKER")
   if [[ -z "$tok" ]]; then
@@ -324,7 +628,7 @@ if wanted unknown-handle; then
   fi
 fi
 
-# ── 4. The sender's advisory check ───────────────────────────────────────────
+# ── 8. The sender's advisory check ───────────────────────────────────────────
 if wanted sender-warns; then
   tok=$(token_for "$OWNER_WORKER")
   has_hub=$(curl -s -m 20 "${OWNER_HUB%/}/hub/peer/$STRANGER_HANDLE" | jq -r '.found // false')
@@ -342,7 +646,7 @@ if wanted sender-warns; then
   fi
 fi
 
-# ── 5. The recipient enforces, independently ─────────────────────────────────
+# ── 9. The recipient enforces, independently ─────────────────────────────────
 # force:true skips the SENDER's advisory check on purpose. What is left is the
 # recipient's own answer, which is the only one that was ever enforcement. A
 # hostile sender would not run the courtesy check either — this simulates that

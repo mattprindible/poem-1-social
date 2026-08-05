@@ -2,16 +2,16 @@ import { getHubPublicJwk, rotateHubKey } from "./hub-key"
 import {
   HUB_COLLECTION,
   HUB_RKEY,
-  PdsError,
   deleteHubRecord,
   fetchHubRecordFor,
   publishHubRecord,
   readHubRecord,
 } from "./hub-record"
+import { PdsError, deleteRepoRecord } from "./pds"
 import { IdentityError, resolveIdentity } from "./identity"
-import { createOAuthClient } from "./oauth-client"
+import { LEXICON_COLLECTION, SCHEMAS, checkLexicon, publishLexicons } from "./lexicon"
 import { KeyError } from "./oauth"
-import { describeError, getOwner } from "./oauth-routes"
+import { describeError, ownerSession } from "./oauth-routes"
 import { AuthError, requireOwner } from "./auth"
 
 // Routes for the hub's published identity, and for discovering other people's.
@@ -26,17 +26,6 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   })
-
-/** Resolve the owner's live session, or explain why there isn't one. */
-async function ownerSession(env: Env, origin: string) {
-  const owner = await getOwner(env)
-  if (!owner) {
-    return { error: json({ error: "unclaimed", message: "no owner; sign in at /oauth/login" }, 409) }
-  }
-  const client = await createOAuthClient(env, origin)
-  const session = await client.restore(owner)
-  return { session, owner }
-}
 
 export async function routeHubIdentityRequest(
   request: Request,
@@ -94,6 +83,73 @@ export async function routeHubIdentityRequest(
       const publicKey = await rotateHubKey(env)
       const result = await publishHubRecord(env, session!, origin)
       return json({ ok: true, publicKey, ...result })
+    }
+
+    // ── Migration escape hatch: drop any record from the owner's repo ────
+    //
+    // Every other write route here is pinned to a collection CONSTANT, which
+    // means the moment a namespace changes, the hub can no longer reach
+    // anything it wrote under the old one. That is how the is.mfd.poem1.*
+    // records were orphaned: not by a bug, but by the constant moving out from
+    // under them, leaving records only an external atproto client could remove.
+    //
+    // Grants no new authority. This is the owner's own repo, and they can
+    // already delete anything in it with any atproto client — it just saves
+    // reaching for one mid-migration, which is exactly when the hub should not
+    // be the thing standing in the way.
+    if (path.startsWith("/hub/repo/") && request.method === "DELETE") {
+      await requireOwner(env, request)
+      const rest = path.slice("/hub/repo/".length).split("/")
+      const collection = decodeURIComponent(rest[0] ?? "")
+      const rkey = decodeURIComponent(rest.slice(1).join("/"))
+      if (!collection || !rkey) {
+        return json(
+          { error: "bad_request", message: "need /hub/repo/<collection>/<rkey>" },
+          400,
+        )
+      }
+
+      const { session, error } = await ownerSession(env, origin)
+      if (error) return error
+      await deleteRepoRecord(session!, collection, rkey)
+      return json({ ok: true, collection, rkey, message: "record deleted from your repo" })
+    }
+
+    // ── The lexicon: does this project's schema resolve? ─────────────────
+    // Ungated read. It reports on public DNS and public records, and "do your
+    // types resolve for a stranger" is precisely a stranger's question.
+    if (path === "/hub/lexicons" && request.method === "GET") {
+      const status = await Promise.all(Object.keys(SCHEMAS).map(checkLexicon))
+      return json({
+        collection: LEXICON_COLLECTION,
+        resolves: status.every((s) => s.resolves),
+        lexicons: status,
+        schemas: SCHEMAS,
+      })
+    }
+
+    // ── Publish the schemas into the owner's repo ────────────────────────
+    // Only meaningful for the account the authority's TXT record names; the
+    // response says which case this is rather than reporting success either way.
+    if (path === "/hub/lexicons" && request.method === "POST") {
+      await requireOwner(env, request)
+      const { session, owner, error } = await ownerSession(env, origin)
+      if (error) return error
+
+      const published = await publishLexicons(session!)
+      const status = await Promise.all(Object.keys(SCHEMAS).map(checkLexicon))
+      const authoritative = status.every((s) => s.dnsDid === owner)
+
+      return json({
+        ok: true,
+        published,
+        authoritative,
+        message: authoritative
+          ? "published, and DNS names this account as the authority"
+          : "published into this repo, but DNS does not name this account — " +
+            "these records resolve for nobody until the TXT record points here",
+        lexicons: status,
+      })
     }
 
     // ── Discovery: find someone else's hub ───────────────────────────────

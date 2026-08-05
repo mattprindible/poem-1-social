@@ -1,6 +1,7 @@
 import type { OAuthSession } from "@atproto/oauth-client"
 
 import { getHubPublicJwk, type PublicJwkEC } from "./hub-key"
+import { PdsError, publicXrpc, xrpc } from "./pds"
 
 // The hub record: one record in the owner's own atproto repo that says "this
 // hub speaks for me, and here is the key it signs with".
@@ -20,16 +21,22 @@ import { getHubPublicJwk, type PublicJwkEC } from "./hub-key"
 // Move the hub and you update one record.
 
 /**
- * Reverse-DNS lexicon id, under a domain the hub owner demonstrably controls.
+ * Reverse-DNS lexicon id, under `san.haha.computer` — a domain the project
+ * owner demonstrably controls, and which publishes the schema for this type at
+ * `_lexicon.san.haha.computer` (see lexicon.ts).
  *
  * Every participant publishes under the same NSID — discovery means reading
- * your ties' repos for this collection — so whoever owns the domain is the de
- * facto authority for the type. `tech.inanimate.*` would be the natural
- * long-term home given Poem/1 and Resident are both Matt Webb's, but claiming
- * a namespace on someone else's domain before asking is not ours to do.
- * Migration is cheap while few records exist; it gets expensive later.
+ * your ties' repos for this collection — so one party is necessarily the
+ * authority for the type. That is how lexicons work rather than a
+ * centralization: Bluesky's own schemas resolve to a single DID while the
+ * records live in millions of separate repos. What an authority can do is stop
+ * *defining*; it cannot reach into anyone's repo or interpose on any push.
+ *
+ * Previously `is.mfd.poem1.hub`, which was wrong twice over — a personal handle
+ * for shared fabric, and one board's name on a device-agnostic type. See
+ * docs/san.md.
  */
-export const HUB_COLLECTION = "is.mfd.poem1.hub"
+export const HUB_COLLECTION = "computer.haha.san.hub"
 
 /** Singleton record: one hub per repo. "self" is the atproto convention. */
 export const HUB_RKEY = "self"
@@ -44,44 +51,6 @@ export interface HubRecord {
   createdAt: string
   /** Most recent publication. */
   updatedAt: string
-}
-
-export class PdsError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message)
-    this.name = "PdsError"
-  }
-}
-
-/**
- * XRPC through the OAuth session, which attaches DPoP-bound credentials and
- * targets the account's own PDS.
- */
-async function xrpc(
-  session: OAuthSession,
-  nsid: string,
-  init?: { method?: string; body?: unknown; query?: Record<string, string> },
-): Promise<unknown> {
-  const query = init?.query ? `?${new URLSearchParams(init.query)}` : ""
-  const res = await session.fetchHandler(`/xrpc/${nsid}${query}`, {
-    method: init?.method ?? "GET",
-    ...(init?.body === undefined
-      ? {}
-      : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(init.body) }),
-  })
-  const text = await res.text()
-  if (!res.ok) {
-    // PDS errors are JSON with error/message; fall back to the raw body.
-    let detail = text
-    try {
-      const parsed = JSON.parse(text) as { error?: string; message?: string }
-      detail = [parsed.error, parsed.message].filter(Boolean).join(": ") || text
-    } catch {
-      /* not JSON — keep the raw body */
-    }
-    throw new PdsError(`${nsid} -> ${res.status} ${detail}`, res.status)
-  }
-  return text ? JSON.parse(text) : undefined
 }
 
 export async function readHubRecord(session: OAuthSession): Promise<HubRecord | null> {
@@ -151,17 +120,16 @@ export async function fetchHubRecordFor(
   did: string,
   pds: string,
 ): Promise<HubRecord | null> {
-  const url = new URL("/xrpc/com.atproto.repo.getRecord", pds)
-  url.searchParams.set("repo", did)
-  url.searchParams.set("collection", HUB_COLLECTION)
-  url.searchParams.set("rkey", HUB_RKEY)
-
-  const res = await fetch(url, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(5000),
-  })
-  if (res.status === 400) return null // no such record
-  if (!res.ok) throw new PdsError(`getRecord -> HTTP ${res.status}`, res.status)
-  const out = (await res.json()) as { value?: HubRecord }
-  return out.value ?? null
+  try {
+    const out = (await publicXrpc(pds, "com.atproto.repo.getRecord", {
+      repo: did,
+      collection: HUB_COLLECTION,
+      rkey: HUB_RKEY,
+    })) as { value?: HubRecord }
+    return out.value ?? null
+  } catch (err) {
+    // "They do not run a hub" is a normal answer, not a failure.
+    if (err instanceof PdsError && err.status === 400) return null
+    throw err
+  }
 }

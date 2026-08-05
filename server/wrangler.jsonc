@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "poem1-hub",
+  "name": "mfd-hub",
   "main": "src/worker.ts",
   "compatibility_date": "2026-03-02",
   // global_fetch_strictly_public: without it, a Worker fetching another Worker
