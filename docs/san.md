@@ -2,8 +2,10 @@
 
 **Status:** definition agreed 2026-08-05, and stages 1, 2, 3 and 5 **built and
 verified the same day** — namespace, lexicon, device claiming, many devices per
-hub, and the naming sweep. Only stage 4 (device type end to end, which needs a
-reflash) remains.
+hub, and the naming sweep. Stage 4 (device identity and self-description) has
+its **hub half built and proven against a simulated device**; the firmware half
+is designed, unwritten, and needs a reflash. Stage 6 (discovery by probing) is
+designed and unbuilt.
 
 It exists because the working code had drifted into assumptions nobody chose:
 one hub means one device, and the record types carried a personal handle and a
@@ -140,12 +142,14 @@ onto other people's devices for its own owner.
 Read the rest of this section as the statement of the problem; it is kept
 because the reasoning still governs what "claimed" has to mean.
 
-**What is still open, stated plainly:** a device authenticates with nothing but
-its id. Anyone who knows a *claimed* id can still open that device's socket and
-receive its apps. Closing that needs a per-device secret in firmware — a reflash
-plus a provisioning story — and is stage 4 below. What the gate buys today is
-that an unclaimed id gets nothing at all, so nobody can squat an arbitrary id or
-use somebody's hub as an open relay, and pushing requires the owner.
+**What the gate alone buys:** an unclaimed id gets nothing, so nobody can squat
+an arbitrary id or use somebody's hub as an open relay, and pushing requires the
+owner. What it cannot do is tell a device from someone who read its id off the
+screen — that is stage 4, whose hub half now exists.
+
+**Still open until the reflash:** the Poem/1 holds no key, so it connects on the
+legacy path where any socket knowing the id is accepted. The protection is real
+but not yet *applied to the hardware in the room*.
 
 The original text follows.
 
