@@ -71,10 +71,14 @@ A hub carries only what its owner has claimed, so an unclaimed id gets nothing �
 that is what stops a hub being an open relay, in both directions. `POST /send`
 additionally requires the owner even for a claimed device.
 
-**The remaining gap, stated plainly:** a device authenticates with nothing but
-its id, so anyone knowing a *claimed* id can still open that device's socket.
-Closing it needs a per-device secret in firmware — a reflash plus provisioning.
-See `docs/san.md`.
+Passing this gate gets a socket, not trust. A device connection is then
+**challenged** by `src/device-agent.ts` and must sign a per-connection nonce
+with the key bound to that device; until it does, it receives nothing. So a
+claimed id opens a socket here and still gets no apps there.
+
+The split is deliberate: a gate is per-request and cannot hold the state a
+challenge-response needs, while the Durable Object owns the connection for its
+lifetime and can.
 
 ### Device relay (the canonical Resident protocol)
 
@@ -115,6 +119,9 @@ See `docs/san.md`.
 | `POST /federation/push` 🔒 | push an app to a mutual's device |
 | `POST /federation/inbox` | receive one — authenticated by **signature**, not by owner |
 | `GET /federation/relationship/<who>` | are we mutuals |
+| `GET /federation/probe/<who>` 🔒 | ask a mutual what they can accept — live, never cached |
+| `POST /federation/capabilities` | answer that question — **signature**-authenticated, mutuals only |
+| `POST /hub/devices/<id>/pair` 🔒 | open a pairing window to bind a device's key |
 | `GET \| POST /hub/devices` 🔒 | list / claim devices |
 | `DELETE /hub/devices/<id>` 🔒 | release one |
 | `GET \| POST /hub/device` 🔒 | which device inbound federation lands on |
@@ -264,6 +271,8 @@ src/oauth.ts              client metadata + client key
 src/oauth-client.ts       @atproto/oauth-client wired for Workers
 src/oauth-routes.ts       login / callback / session / logout
 src/device-gate.ts        the relay gate — auth + claim check, ahead of upstream
+src/device-identity.ts    per-device keys: challenge, verify, pairing window
+src/capabilities.ts       device profiles, for mutuals probing what we accept
 src/devices.ts            the device registry: claim, release, list, default
 src/hub-key.ts            federation signing key
 src/pds.ts                XRPC to a PDS: authenticated (session) and public

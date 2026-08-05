@@ -81,6 +81,12 @@ with the **device ID** — you'll need that to push apps.
 cat my-app.lua | ./send-app.sh --device-id <id>
 ```
 
+> [!NOTE]
+> Pushing to **your own** hub needs the owner credential, which `send-app.sh`
+> picks up from `$HUB_ADMIN_TOKEN` or the macOS keychain automatically. The
+> public relay needs none. If you get a 401, the token for that hub isn't on
+> this machine — see [`server/README.md`](server/README.md).
+
 Apps in [`device-apps/`](device-apps/): `minute-clock`, `battery-watch`,
 `hello-status`, `first-light`, `hw-survey`, `nightfall` (a still night scene,
 drawn once and left alone — the calmest thing to leave on the panel), `standby`,
@@ -292,16 +298,27 @@ untouched — and the 3-second button hold stops anything, whoever sent it.
 
 ### Testing it
 
-This path needs two identities, two hubs, a live mutual follow and a physical
-device, so it is the most important thing here and the most expensive to check.
-[`test-federation.sh`](test-federation.sh) runs the whole chain — credential,
-discovery, signing, verification, mutual check, delivery — and asserts on the
-*device's* answer rather than the relay's:
+This needs four atproto identities, four hubs, a real follow graph and a
+physical device — the most important thing here and the most expensive to
+check. [`test-federation.sh`](test-federation.sh) runs the whole trust chain and
+asserts on the *device's* own answer rather than the relay's:
 
 ```sh
-./test-federation.sh                      # push federated-hello.lua
-./test-federation.sh --force              # let the RECIPIENT's check be the test
+./test-federation.sh                 # every configured case
+./test-federation.sh --list          # what each case needs
+./test-federation.sh --only discovery
+./test-federation.sh -v              # full JSON per case
 ```
+
+Nine cases, covering each link: the device proves it is that device
+(`device-identity`), the hub carries only claimed devices and refuses anonymous
+pushes (`relay-closed`), a peer proves who they are and is checked against the
+graph (`mutual-push`, `recipient-enforces`), and capabilities are asked for live
+rather than remembered (`discovery`).
+
+Two of them deliberately misbehave, which is what `tools/fake-device.mjs` is
+for: it stands in for firmware so the impostor cases — wrong key, no key,
+silence — can be exercised without asking real hardware to attack itself.
 
 It reads the sender's owner token from `$HUB_ADMIN_TOKEN` or the macOS keychain.
 Cloudflare secrets are write-only, so record the token once when you set it

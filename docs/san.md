@@ -462,7 +462,7 @@ makes this the last cheap moment to change them.
 | `noitsrusty.bsky.social` | `rusty-hub` | follower, not followed back — **may not** |
 | `san.haha.computer` | `san-hub` | **authority.** No follows either way, and **no hub record** |
 
-Every hub is named for the identity that owns it, never for a board. Suite 6/6
+Every hub is named for the identity that owns it, never for a board. Suite 9/9
 on this cast.
 
 **Rusty exists only to be refused**, and that is a real fixture rather than a

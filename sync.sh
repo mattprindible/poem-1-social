@@ -126,6 +126,16 @@ else
 fi
 
 # ── Safety gate 2: quiesce the panel before esptool resets the board ─────────
+#
+# BETTER, IF SOMEONE IS STANDING THERE: hold the device's button ~3s first. That
+# suspends the app AND clears the persisted copy, so nothing is left to restore
+# after the flash. Pushing standby.lua only stops the *drawing* — it still
+# writes an app into NVS that the next boot will restore and redraw. This gate
+# exists for the unattended case, where nobody can press anything.
+#
+# Also note pushing now needs the owner credential on your own hub (the relay
+# gate), which send-app.sh reads from the keychain. No token means this aborts,
+# which is the correct direction to fail.
 echo "==> Quiescing the e-ink panel before flashing…"
 if "$REPO_ROOT/send-app.sh" "$REPO_ROOT/device-apps/standby.lua"; then
   echo "    standby.lua pushed; waiting ${QUIESCE_WAIT}s for the refresh to settle…"

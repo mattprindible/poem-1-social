@@ -31,7 +31,13 @@ device's own telemetry, not by the relay's 200. Listing someone else's library
 is an unauthenticated read of their PDS, so discovery needs no hub and no
 account.
 
-What does NOT exist yet: weak-tie discovery, and any of the onboarding work.
+What does NOT exist yet: **weak-tie discovery** — finding apps through
+followers-of-followers — and any of the onboarding work.
+
+Do not confuse that with the capability probing built on 2026-08-05: that asks a
+**mutual's hub** what hardware shape it can accept, so a sender knows what to
+push. Weak-tie discovery is a different question (whose *apps* can I find?),
+answered by reading repos rather than by asking hubs, and it is still unbuilt.
 
 **Stepping back, 2026-08-05.** Reviewing the code against the concept turned up
 two things it had assumed rather than chosen: a hub carries exactly one device,
@@ -44,6 +50,20 @@ the most serious thing in the project and is now closed — see "Push is the onl
 write path" below. Worth noting how it was found: not by a test or a report, but
 by writing down what a hub *is* and checking the code against it. The hole had
 been there since the first hub existed.
+
+**The trust chain is now proved end to end** (2026-08-05), with every link
+demonstrated rather than assumed:
+
+| Link | Proved by |
+|---|---|
+| the device is that device | a P-256 key it generates and never sends, signing a per-connection challenge |
+| the hub is yours | the device is *claimed*, and pushing needs an owner credential |
+| the peer is who they say | a signature against the key in *their* repo |
+| they may push at all | a mutual follow, enforced by the recipient |
+| what they can push to | a live capability probe, never a remembered belief |
+
+`test-federation.sh` asserts all five, 9/9. The device work is in
+[`san.md`](san.md).
 
 **Namespace — SETTLED AND MIGRATED 2026-08-05.** Records moved from
 `is.mfd.poem1.*` to `computer.haha.san.*`, under the authority
@@ -90,9 +110,10 @@ offers you, *you* pull.
 > and a hub carries only devices its owner has **claimed**. The suite's
 > `relay-closed` case asserts both halves so it cannot silently reopen.
 >
-> **Still open, and worth knowing:** a device proves its identity with nothing
-> but its ID, so anyone who knows a *claimed* ID can still open that device's
-> socket and receive its apps. That needs a per-device secret in firmware.
+> **And the device now proves it is the device** (2026-08-05, verified on
+> hardware): it holds a P-256 key generated on first boot and signs a
+> per-connection challenge. An impostor attached to the same device ID alongside
+> the real Poem/1 received zero frames while the device compiled the push.
 > Device-side *mechanism* is unaffected throughout — sandbox, driver allowlist,
 > flip limits and hold-to-stop hold against a hostile push from any source.
 

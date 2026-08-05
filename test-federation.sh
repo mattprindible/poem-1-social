@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 #
-# test-federation.sh — Prove the federated push path end to end, in one command.
+# test-federation.sh — Prove the whole trust chain end to end, in one command.
 #
 #   sender's hub  ──signed HTTPS──▶  recipient's hub  ──WSS──▶  recipient's device
+#
+# It began as a test of the federated push and now covers every link in that
+# chain, because each one is only worth anything if the others hold:
+#
+#   the device is that device      device-identity  (a key it proves per connection)
+#   the hub is its owner's         relay-closed     (claimed devices, owner-only push)
+#   the peer is who they claim     mutual-push      (signature vs the key in their repo)
+#   they are allowed to push       recipient-enforces (mutual follow, recipient decides)
+#   what they can push to          discovery        (asked live, never remembered)
 #
 # This is the most important path in the project and structurally the least
 # testable one: it needs multiple atproto identities, deployed hubs, real follow

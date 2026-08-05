@@ -26,17 +26,22 @@ import { isClaimed } from "./devices"
 //   GET /             connection count. Owner only; it is a presence oracle for
 //                     anyone probing device ids.
 //
-// ── What this deliberately does NOT do ───────────────────────────────────────
-// A device still authenticates with nothing but its id. Anyone who knows a
-// CLAIMED id can still open the device socket and receive that device's apps.
-// Closing that needs a per-device secret in firmware, which means a reflash and
-// a provisioning story — see docs/san.md. What the claim check buys today is
-// that an id this hub does not carry gets nothing at all, so a stranger cannot
-// squat an arbitrary id, and cannot use this hub as an open relay.
+// ── Where this gate stops, and what carries on ───────────────────────────────
+// This gate answers "is this id one we carry, and is the caller the owner". It
+// deliberately does NOT answer "is this really the device" — a WebSocket
+// upgrade here is allowed on a claimed id alone, because at this point in the
+// request no proof has been exchanged yet.
 //
-// The honest summary: this makes the hub refuse to carry other people's
-// traffic, and makes pushing require the owner. It does not yet make the device
-// prove it is the device.
+// That proof happens one layer in, in device-agent.ts: the connection is
+// challenged on open and must sign a per-connection nonce with the key bound to
+// that device. Until it does, it receives nothing. So a claimed id gets a
+// SOCKET here and still gets no APPS there.
+//
+// Splitting it that way is not an accident of history. A gate is per-request
+// and cannot hold the state a challenge-response needs; the Durable Object can,
+// because it owns the connection for its lifetime. Trying to do identity here
+// would mean either a stateless proof (a password, replayable) or duplicating
+// connection state outside the object that already has it.
 
 const json = (body: unknown, status: number) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -66,7 +71,8 @@ export async function gateDeviceRequest(
   const monitor = url.searchParams.get("monitor") === "1"
 
   // ── The device's own socket ────────────────────────────────────────────
-  // Claim check only; see the header for why that is the ceiling today.
+  // Claim check only. Proving it IS the device happens after the upgrade, in
+  // device-agent.ts — see the header for why the split is deliberate.
   if (isWebSocketUpgrade(request) && !monitor) {
     if (await isClaimed(env, deviceId)) return null
     // 403 and a plain reason: this is read by someone holding a device that

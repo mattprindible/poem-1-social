@@ -4,7 +4,20 @@ import type { Connection, ConnectionContext, WSMessage } from "agents"
 import { getDevice, updateDevice } from "./devices"
 import { closePairWindow, fingerprintOf, judgeIdentity, newChallenge } from "./device-identity"
 
-// The relay Durable Object, extended so the device can talk BACK.
+// The relay Durable Object, extended to do two things upstream's does not:
+// let the device talk BACK, and make it PROVE it is the device.
+//
+// Those sound unrelated and are not. Everything a device says — telemetry,
+// events, its own account of what hardware it is — is only worth recording once
+// something has established that the device said it. The return path came
+// first and the proof came later, which is why this file reads in that order.
+//
+// ── Identity, in one paragraph ───────────────────────────────────────────────
+// A connection is challenged on open with a fresh nonce and must sign it with
+// the key bound to this device (device-identity.ts). Until it does, handleSend
+// will not deliver to it and record() will not log it. That gating is the
+// enforcement — refusing to *verify* is not, because an impostor can simply
+// never answer and sit in upstream's "device" tag receiving everything.
 //
 // Upstream's `DeviceAgent.onMessage` is an empty function — deliberately, since
 // the canonical relay's job is to carry pushes *to* a device and it has nowhere
