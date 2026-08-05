@@ -189,10 +189,29 @@ so it should be batched with any other firmware work rather than done alone.
 
 Ordered by dependency, not by size. Nothing here is started.
 
-### 1. Namespace and lexicon
+### 1. Namespace and lexicon — DONE 2026-08-05
 
-First, because cost grows with every record published under the old NSID, and
-because the schema cannot be published until the type is named.
+Done as a clean rebuild rather than an in-place edit: a new worker (`mfd-hub`,
+named for the identity it belongs to rather than for a board), fresh secrets,
+fresh OAuth claim, device moved over the air. Suite 6/6 afterwards, with the
+device confirming its own arrival by naming the destination hub.
+
+That rebuild was worth more than the migration it carried, because it walked the
+onboarding path nobody had walked since the project began — and immediately
+found that the **documented setup command was broken**: `npm run gen-key |
+wrangler secret put` pipes npm's banner into the secret, so the hub reports
+`HUB_PRIVATE_JWK is not valid JSON` behind a 503 that reads like a deploy
+failure. Fixed in both READMEs. This is the argument for rehearsing onboarding
+rather than reasoning about it.
+
+Cleanup: all five orphaned `is.mfd.poem1.*` records deleted, verified by
+listing every collection in all three repos. `poem1-hub` is superseded but left
+deployed for now — deleting a Worker destroys its Durable Objects, and nothing
+depends on it (the device's own fallback is the public relay, not this).
+
+Original reasoning, kept: first, because cost grows with every record published
+under the old NSID, and because the schema cannot be published until the type is
+named.
 
 - New constants: `computer.haha.san.hub`, `computer.haha.san.app`
 - DNS TXT (owner action, one record)

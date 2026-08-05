@@ -53,6 +53,25 @@ export async function xrpc(
 }
 
 /**
+ * Delete any record from the signed-in account's own repo.
+ *
+ * Collection is a parameter rather than a constant on purpose — it is the one
+ * operation that has to outlive a namespace change, because everything pinned
+ * to a constant loses its grip on the old records the moment that constant
+ * moves.
+ */
+export async function deleteRepoRecord(
+  session: OAuthSession,
+  collection: string,
+  rkey: string,
+): Promise<void> {
+  await xrpc(session, "com.atproto.repo.deleteRecord", {
+    method: "POST",
+    body: { repo: session.did, collection, rkey },
+  })
+}
+
+/**
  * Unauthenticated XRPC against someone else's PDS. Repo records are public, so
  * reading a stranger's hub or app records needs no account and no API key.
  *
