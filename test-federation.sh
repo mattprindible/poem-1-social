@@ -74,27 +74,39 @@ set -euo pipefail
 # Three identities with deliberately different relationships to the device
 # owner, because one mutual proves nothing on its own:
 #
-#   mfd.is                    owns the DEVICE. The recipient in every case.
-#   hahacomputer.bsky.social  MUTUAL with mfd.is  -> may push.
-#   idiot.town                follows mfd.is, NOT followed back -> may not.
+#   mfd.is              owns the DEVICE. The recipient in every case.
+#   idiot.town          MUTUAL with mfd.is  -> may push.
+#   san.haha.computer   follows mfd.is, NOT followed back -> may not.
 #
-# idiot.town is the interesting one. A follower is not a mutual, and it is the
-# relationship most likely to be got wrong by a sloppy graph check: it looks
+# The non-mutual is the interesting one. A follower is not a mutual, and it is
+# the relationship most likely to be got wrong by a sloppy graph check: it looks
 # like a connection, and `followedBy: true` is exactly what a naive
 # implementation would accept.
+#
+# ROLES SWAPPED 2026-08-05. idiot.town used to be the non-mutual and
+# hahacomputer.bsky.social the mutual; that account is now san.haha.computer,
+# the lexicon AUTHORITY. Nothing about the swap touched the hubs or their keys,
+# because the follow graph and every record are keyed by DID — only the handles
+# and which way the follows point changed.
+#
+# TEMPORARY, AND KNOWN WRONG: san.haha.computer is meant to read as the
+# authority, not as a person, and using it as the "stranger" fixture reintroduces
+# exactly the confusion the rename set out to remove. It is here because the
+# negative cases are the entire security claim and must not go dark; the fix is a
+# throwaway fourth identity that exists only to be refused. See docs/san.md.
 OWNER_HANDLE="${POEM1_OWNER_HANDLE:-mfd.is}"
 
 OWNER_HUB="${POEM1_OWNER_HUB:-https://mfd-hub.service-cloudflare-442.workers.dev}"
 OWNER_WORKER="${POEM1_OWNER_WORKER:-mfd-hub}"
 
-MUTUAL_HUB="${POEM1_MUTUAL_HUB:-https://poem1-hub-haha.service-cloudflare-442.workers.dev}"
-MUTUAL_WORKER="${POEM1_MUTUAL_WORKER:-poem1-hub-haha}"
+MUTUAL_HUB="${POEM1_MUTUAL_HUB:-https://poem1-hub-idiot.service-cloudflare-442.workers.dev}"
+MUTUAL_WORKER="${POEM1_MUTUAL_WORKER:-poem1-hub-idiot}"
 
 # The non-mutual sender. Unset/undeployed until someone stands it up, so the
 # cases that need it SKIP loudly rather than silently not running.
-STRANGER_HANDLE="${POEM1_STRANGER_HANDLE:-idiot.town}"
-STRANGER_HUB="${POEM1_STRANGER_HUB:-https://poem1-hub-idiot.service-cloudflare-442.workers.dev}"
-STRANGER_WORKER="${POEM1_STRANGER_WORKER:-poem1-hub-idiot}"
+STRANGER_HANDLE="${POEM1_STRANGER_HANDLE:-san.haha.computer}"
+STRANGER_HUB="${POEM1_STRANGER_HUB:-https://poem1-hub-haha.service-cloudflare-442.workers.dev}"
+STRANGER_WORKER="${POEM1_STRANGER_WORKER:-poem1-hub-haha}"
 
 # A handle that cannot resolve, for the discovery-failure case. Deliberately
 # .invalid (RFC 2606) so it can never start resolving and quietly stop testing

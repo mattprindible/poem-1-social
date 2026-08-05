@@ -264,6 +264,33 @@ The federation headers are wire protocol, so in principle they are a
 compatibility concern. In practice all three hubs are the same person's, which
 makes this the last cheap moment to change them.
 
+## The cast needs a fourth identity
+
+**Settled 2026-08-05:** `san.haha.computer` is the authority. It publishes the
+lexicon, and it should not read as a person.
+
+The test suite disagrees with that, and knowingly. Its negative cases need a
+sender who is a *follower but not a mutual* — the asymmetric relationship a
+sloppy graph check gets wrong, since `followedBy: true` looks like a connection.
+When `idiot.town` became the mutual, the only remaining account holding that
+relationship to `mfd.is` was `san.haha.computer`, so it is currently doing
+double duty as both the authority and the "stranger" fixture.
+
+That is the confusion the rename existed to remove, reintroduced one level down.
+It stands only because the alternative was letting `recipient-enforces` go dark,
+and the negative cases *are* the security claim — a push path that accepts
+everything passes every positive test perfectly.
+
+**The fix is a throwaway fourth identity** whose entire job is to be refused: a
+Bluesky account that follows `mfd.is` and is not followed back, plus a hub of
+its own (the refusal happens at the recipient, but the sender still needs a hub
+record to be resolvable — `/federation/push` looks that up *before* the mutual
+check, so a sender with no hub returns `no_hub` and never exercises the graph
+logic at all).
+
+Until then the suite's header says plainly that the fixture is wrong, rather
+than quietly reading as if the authority were a participant.
+
 ## Knock-on: the test identities
 
 `test-federation.sh` defaults to `hahacomputer.bsky.social` as the mutual. If
