@@ -2,16 +2,15 @@ import { getHubPublicJwk, rotateHubKey } from "./hub-key"
 import {
   HUB_COLLECTION,
   HUB_RKEY,
-  PdsError,
   deleteHubRecord,
   fetchHubRecordFor,
   publishHubRecord,
   readHubRecord,
 } from "./hub-record"
+import { PdsError } from "./pds"
 import { IdentityError, resolveIdentity } from "./identity"
-import { createOAuthClient } from "./oauth-client"
 import { KeyError } from "./oauth"
-import { describeError, getOwner } from "./oauth-routes"
+import { describeError, ownerSession } from "./oauth-routes"
 import { AuthError, requireOwner } from "./auth"
 
 // Routes for the hub's published identity, and for discovering other people's.
@@ -26,17 +25,6 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   })
-
-/** Resolve the owner's live session, or explain why there isn't one. */
-async function ownerSession(env: Env, origin: string) {
-  const owner = await getOwner(env)
-  if (!owner) {
-    return { error: json({ error: "unclaimed", message: "no owner; sign in at /oauth/login" }, 409) }
-  }
-  const client = await createOAuthClient(env, origin)
-  const session = await client.restore(owner)
-  return { session, owner }
-}
 
 export async function routeHubIdentityRequest(
   request: Request,

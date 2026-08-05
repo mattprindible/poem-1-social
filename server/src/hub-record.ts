@@ -1,6 +1,7 @@
 import type { OAuthSession } from "@atproto/oauth-client"
 
 import { getHubPublicJwk, type PublicJwkEC } from "./hub-key"
+import { PdsError, publicXrpc, xrpc } from "./pds"
 
 // The hub record: one record in the owner's own atproto repo that says "this
 // hub speaks for me, and here is the key it signs with".
@@ -44,44 +45,6 @@ export interface HubRecord {
   createdAt: string
   /** Most recent publication. */
   updatedAt: string
-}
-
-export class PdsError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message)
-    this.name = "PdsError"
-  }
-}
-
-/**
- * XRPC through the OAuth session, which attaches DPoP-bound credentials and
- * targets the account's own PDS.
- */
-async function xrpc(
-  session: OAuthSession,
-  nsid: string,
-  init?: { method?: string; body?: unknown; query?: Record<string, string> },
-): Promise<unknown> {
-  const query = init?.query ? `?${new URLSearchParams(init.query)}` : ""
-  const res = await session.fetchHandler(`/xrpc/${nsid}${query}`, {
-    method: init?.method ?? "GET",
-    ...(init?.body === undefined
-      ? {}
-      : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(init.body) }),
-  })
-  const text = await res.text()
-  if (!res.ok) {
-    // PDS errors are JSON with error/message; fall back to the raw body.
-    let detail = text
-    try {
-      const parsed = JSON.parse(text) as { error?: string; message?: string }
-      detail = [parsed.error, parsed.message].filter(Boolean).join(": ") || text
-    } catch {
-      /* not JSON — keep the raw body */
-    }
-    throw new PdsError(`${nsid} -> ${res.status} ${detail}`, res.status)
-  }
-  return text ? JSON.parse(text) : undefined
 }
 
 export async function readHubRecord(session: OAuthSession): Promise<HubRecord | null> {
@@ -151,17 +114,16 @@ export async function fetchHubRecordFor(
   did: string,
   pds: string,
 ): Promise<HubRecord | null> {
-  const url = new URL("/xrpc/com.atproto.repo.getRecord", pds)
-  url.searchParams.set("repo", did)
-  url.searchParams.set("collection", HUB_COLLECTION)
-  url.searchParams.set("rkey", HUB_RKEY)
-
-  const res = await fetch(url, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(5000),
-  })
-  if (res.status === 400) return null // no such record
-  if (!res.ok) throw new PdsError(`getRecord -> HTTP ${res.status}`, res.status)
-  const out = (await res.json()) as { value?: HubRecord }
-  return out.value ?? null
+  try {
+    const out = (await publicXrpc(pds, "com.atproto.repo.getRecord", {
+      repo: did,
+      collection: HUB_COLLECTION,
+      rkey: HUB_RKEY,
+    })) as { value?: HubRecord }
+    return out.value ?? null
+  } catch (err) {
+    // "They do not run a hub" is a normal answer, not a failure.
+    if (err instanceof PdsError && err.status === 400) return null
+    throw err
+  }
 }

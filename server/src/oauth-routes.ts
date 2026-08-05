@@ -40,6 +40,26 @@ export async function getOwner(env: Env): Promise<string | undefined> {
 }
 
 /**
+ * Resolve the owner's live OAuth session, or explain why there isn't one.
+ *
+ * Anything that WRITES the owner's repo needs this — publishing the hub record,
+ * publishing an app — so it lives next to getOwner rather than in whichever
+ * route file happened to need it first. An unclaimed hub is a 409 and not a
+ * 401: nothing is wrong with the request, the hub simply has no owner yet.
+ */
+export async function ownerSession(env: Env, origin: string) {
+  const owner = await getOwner(env)
+  if (!owner) {
+    return {
+      error: json({ error: "unclaimed", message: "no owner; sign in at /oauth/login" }, 409),
+    }
+  }
+  const client = await createOAuthClient(env, origin)
+  const session = await client.restore(owner)
+  return { session, owner }
+}
+
+/**
  * Walk the `cause` chain.
  *
  * The atproto errors wrap their real reason and present a generic message —
