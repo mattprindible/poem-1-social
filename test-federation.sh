@@ -74,39 +74,42 @@ set -euo pipefail
 # Three identities with deliberately different relationships to the device
 # owner, because one mutual proves nothing on its own:
 #
-#   mfd.is              owns the DEVICE. The recipient in every case.
-#   idiot.town          MUTUAL with mfd.is  -> may push.
-#   san.haha.computer   follows mfd.is, NOT followed back -> may not.
+#   mfd.is                   owns the DEVICE. The recipient in every case.
+#   idiot.town               MUTUAL with mfd.is  -> may push.
+#   noitsrusty.bsky.social   follows mfd.is, NOT followed back -> may not.
 #
 # The non-mutual is the interesting one. A follower is not a mutual, and it is
 # the relationship most likely to be got wrong by a sloppy graph check: it looks
 # like a connection, and `followedBy: true` is exactly what a naive
 # implementation would accept.
 #
-# ROLES SWAPPED 2026-08-05. idiot.town used to be the non-mutual and
-# hahacomputer.bsky.social the mutual; that account is now san.haha.computer,
-# the lexicon AUTHORITY. Nothing about the swap touched the hubs or their keys,
-# because the follow graph and every record are keyed by DID — only the handles
-# and which way the follows point changed.
+# Rusty exists ONLY to be refused. That is a real fixture, not a spare account:
+# the negative cases are the whole security claim, and they need a sender holding
+# the awkward relationship on purpose and permanently. Do not "tidy up" by
+# following it back — that silently converts the load-bearing refusal test into
+# a second copy of the positive one.
 #
-# TEMPORARY, AND KNOWN WRONG: san.haha.computer is meant to read as the
-# authority, not as a person, and using it as the "stranger" fixture reintroduces
-# exactly the confusion the rename set out to remove. It is here because the
-# negative cases are the entire security claim and must not go dark; the fix is a
-# throwaway fourth identity that exists only to be refused. See docs/san.md.
+# It needs a hub of its own even though it never succeeds, because
+# /federation/push resolves the recipient's hub record BEFORE the mutual check —
+# a sender with no hub record fails at `no_hub` and never exercises the graph
+# logic the case exists to test.
+#
+# Note who is NOT here: san.haha.computer is the lexicon AUTHORITY and holds no
+# follows in either direction. It briefly stood in as this fixture and should
+# not again — the authority is not a participant.
 OWNER_HANDLE="${POEM1_OWNER_HANDLE:-mfd.is}"
 
 OWNER_HUB="${POEM1_OWNER_HUB:-https://mfd-hub.service-cloudflare-442.workers.dev}"
 OWNER_WORKER="${POEM1_OWNER_WORKER:-mfd-hub}"
 
-MUTUAL_HUB="${POEM1_MUTUAL_HUB:-https://poem1-hub-idiot.service-cloudflare-442.workers.dev}"
-MUTUAL_WORKER="${POEM1_MUTUAL_WORKER:-poem1-hub-idiot}"
+MUTUAL_HUB="${POEM1_MUTUAL_HUB:-https://idiot-hub.service-cloudflare-442.workers.dev}"
+MUTUAL_WORKER="${POEM1_MUTUAL_WORKER:-idiot-hub}"
 
 # The non-mutual sender. Unset/undeployed until someone stands it up, so the
 # cases that need it SKIP loudly rather than silently not running.
-STRANGER_HANDLE="${POEM1_STRANGER_HANDLE:-san.haha.computer}"
-STRANGER_HUB="${POEM1_STRANGER_HUB:-https://poem1-hub-haha.service-cloudflare-442.workers.dev}"
-STRANGER_WORKER="${POEM1_STRANGER_WORKER:-poem1-hub-haha}"
+STRANGER_HANDLE="${POEM1_STRANGER_HANDLE:-noitsrusty.bsky.social}"
+STRANGER_HUB="${POEM1_STRANGER_HUB:-https://rusty-hub.service-cloudflare-442.workers.dev}"
+STRANGER_WORKER="${POEM1_STRANGER_WORKER:-rusty-hub}"
 
 # A handle that cannot resolve, for the discovery-failure case. Deliberately
 # .invalid (RFC 2606) so it can never start resolving and quietly stop testing

@@ -264,32 +264,39 @@ The federation headers are wire protocol, so in principle they are a
 compatibility concern. In practice all three hubs are the same person's, which
 makes this the last cheap moment to change them.
 
-## The cast needs a fourth identity
+## The cast — settled 2026-08-05
 
-**Settled 2026-08-05:** `san.haha.computer` is the authority. It publishes the
-lexicon, and it should not read as a person.
+| Identity | Hub | Role |
+|---|---|---|
+| `mfd.is` | `mfd-hub` | owns the device (`fccf2990`); recipient in every case |
+| `idiot.town` | `idiot-hub` | **mutual** — may push |
+| `noitsrusty.bsky.social` | `rusty-hub` | follower, not followed back — **may not** |
+| `san.haha.computer` | `san-hub` | **authority.** No follows either way, and **no hub record** |
 
-The test suite disagrees with that, and knowingly. Its negative cases need a
-sender who is a *follower but not a mutual* — the asymmetric relationship a
-sloppy graph check gets wrong, since `followedBy: true` looks like a connection.
-When `idiot.town` became the mutual, the only remaining account holding that
-relationship to `mfd.is` was `san.haha.computer`, so it is currently doing
-double duty as both the authority and the "stranger" fixture.
+Every hub is named for the identity that owns it, never for a board. Suite 6/6
+on this cast.
 
-That is the confusion the rename existed to remove, reintroduced one level down.
-It stands only because the alternative was letting `recipient-enforces` go dark,
-and the negative cases *are* the security claim — a push path that accepts
-everything passes every positive test perfectly.
+**Rusty exists only to be refused**, and that is a real fixture rather than a
+spare account. The negative cases are the entire security claim, so they need a
+sender holding the awkward relationship *on purpose and permanently*. Following
+it back would silently convert the load-bearing refusal test into a second copy
+of the positive one, and everything would still pass — which is why the suite
+header says so out loud.
 
-**The fix is a throwaway fourth identity** whose entire job is to be refused: a
-Bluesky account that follows `mfd.is` and is not followed back, plus a hub of
-its own (the refusal happens at the recipient, but the sender still needs a hub
-record to be resolvable — `/federation/push` looks that up *before* the mutual
-check, so a sender with no hub returns `no_hub` and never exercises the graph
-logic at all).
+It needs a hub despite never succeeding, because `/federation/push` resolves the
+recipient's hub record **before** the mutual check: a sender with no hub record
+fails at `no_hub` and never reaches the graph logic the case exists to test.
 
-Until then the suite's header says plainly that the fixture is wrong, rather
-than quietly reading as if the authority were a participant.
+**The authority is not a participant.** `san.haha.computer` holds zero follows
+in either direction and publishes **no** hub record — a hub record says "I am a
+peer, push to me", which the authority is not. Its hub still exists as a private
+admin tool for managing the lexicon schemas.
+
+That separation is worth having demonstrated rather than assumed: after deleting
+the record, `/hub/peer/san.haha.computer` reports *"they are not running a hub"*
+while both schemas still resolve. **Schema authority and network participation
+are independent** — which is exactly what makes a shared lexicon fabric rather
+than a hub everyone has to trust.
 
 ## Knock-on: the test identities
 
