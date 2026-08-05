@@ -90,6 +90,7 @@ printf '%s' "$TOKEN" | npx wrangler secret put HUB_ADMIN_TOKEN
 | `POST /federation/inbox` | receive one — authenticated by **signature**, not by owner |
 | `GET /federation/relationship/<who>` | are we mutuals |
 | `GET \| POST /hub/device` 🔒 | which device this hub relays to |
+| `GET /hub/device/events` 🔒 | what that device has **said back** — see below |
 
 🔒 = owner only. Send `Authorization: Bearer $HUB_ADMIN_TOKEN`, or use the browser
 session cookie from `/oauth/login`. A session is checked against the **current**
@@ -106,6 +107,41 @@ when adding routes.
 enforces independently — so it exists to make that independence observable
 instead of masked by the local check.
 
+### The device's return path
+
+Upstream's relay carries pushes **to** a device and drops anything coming back
+(`DeviceAgent.onMessage` is an empty function). `src/device-agent.ts` subclasses
+it, records what the device emits in a bounded ring, and serves it:
+
+```sh
+curl -H "Authorization: Bearer $HUB_ADMIN_TOKEN" https://<hub>/hub/device/events
+```
+
+```json
+{ "deviceId": "…", "deviceConnected": true, "lastEventAt": 1785895724053,
+  "events": [ { "seq": 42, "at": …, "channel": "app", "type": "heartbeat",
+                "name": null, "body": "{…}" } ] }
+```
+
+Three kinds of thing arrive here, and `type` / `name` tell them apart:
+
+| | |
+|---|---|
+| `channel:"app"` | the Lua app's own `events.send(name, data)` |
+| `channel:"system"`, `type:"hello"` | sent on every connect, naming the hub the device believes it reached |
+| `type:"telemetry"` | the runtime's own reports; `name` is `app_compiled`, `compile_error`, `runtime_error`, `log_error`, … |
+
+Owner-gated, **not** device-ID-gated. A device ID is the credential for *pushing*
+to a device and this hub already knows its own — but what a device *emits* is the
+owner's, and an app can report anything it likes.
+
+Prefer `lastEventAt` to `deviceConnected` as proof of life: Durable Objects keep
+hibernating WebSockets from old boots, so the connection count (and `GET
+/devices/<id>`) can report a device that left hours ago. A recorded event cannot.
+That is why `set-hub.sh` confirms a hub switch with the device's own `hello`
+naming the destination, and only falls back to counting connections when it has
+no owner token for the destination.
+
 ## Testing it
 
 ```sh
@@ -113,6 +149,17 @@ cd .. && ./test-federation.sh          # every configured case
 ./test-federation.sh --list            # what each case needs
 ./test-federation.sh -v                # full JSON per case
 ```
+
+`mutual-push` asserts the app **compiled on the device**, read back from its own
+`app_compiled` telemetry — not merely that the relay accepted it for delivery. A
+broken app still returns 200 with `delivered:true`, so delivery alone was never
+the claim worth making. That needs an owner token for the *recipient* hub; without
+one the case passes on delivery and says the compile went unverified.
+
+A run where nothing passes exits **1**, including when every case skips. Skips
+are not failures (an unconfigured hub should not look like a broken push path)
+but they are not passes either, and the suite used to exit 0 on a run that tested
+nothing at all.
 
 The positive case proves the machinery runs; the negative cases prove it says
 no, which is the entire security claim. A hub that accepted everything would pass
@@ -143,6 +190,7 @@ sent the app.
 
 ```
 src/worker.ts             entry: routing + Durable Object exports
+src/device-agent.ts       DeviceAgent DO — the relay, extended to hear the device
 src/hub-store.ts          HubStore DO — owner, keys, sessions, nonces
 src/auth.ts               owner authentication (cookie + bearer)
 src/identity.ts           atproto resolution: handle -> DID -> PDS
@@ -157,8 +205,14 @@ src/federation-routes.ts  push and inbox
 scripts/gen-key.mjs       generate the OAuth client key (WebCrypto, no deps)
 ```
 
-Two Durable Objects: `DeviceAgent` (per device, from `@inanimate/resident`) and
-`HubStore` (a singleton, since a hub has exactly one owner).
+Two Durable Objects: `DeviceAgent` (per device) and `HubStore` (a singleton,
+since a hub has exactly one owner).
+
+`DeviceAgent` is **our subclass** of the one in `@inanimate/resident`, exported
+under the same name deliberately. A Durable Object's class name is part of its
+migration identity, so renaming it would need a `renamed_classes` migration
+against a live object holding the device's socket — subclassing under the same
+name keeps that off the table. Don't "improve" the name.
 
 ## Running on Workers
 
@@ -178,6 +232,12 @@ Two platform notes, both found the hard way:
 - **Deploying restarts Durable Objects and drops device WebSockets**, so the
   first push after a deploy can report "Device not connected" until the device
   reconnects a few seconds later.
+- A Durable Object keeps serving the **old code** for a short while after a
+  deploy, so the first RPC to a method you just added can fail with *"The RPC
+  receiver does not implement the method"*. It looks exactly like a broken
+  export or a missing binding; it is neither. Wait and retry before debugging —
+  `npx wrangler deploy --dry-run --outdir …` and grepping the bundle for the
+  method name settles whether the code actually shipped.
 
 ## Development
 

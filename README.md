@@ -299,6 +299,14 @@ second:
 - `sync.sh --flash` (reflashing a device already on Resident) is the verified
   path — see [Staying in sync](#staying-in-sync-with-resident) for its two
   safety gates.
+- **Known rough edge:** `sync.sh` couples two things — it updates Resident *and*
+  flashes. So reflashing a change to `device/src/main.cpp` also moves you to
+  whatever upstream Resident has become, which makes one reflash carry two
+  variables. When that matters, build with `pio run -e poem1 -d device` against
+  the cached dependency and run the same two gates by hand before
+  `pio run -e poem1 -t upload -d device`: confirm the pinned `upload_port`'s MAC
+  from `pio device list --json-output`, then push `standby.lua` and let the panel
+  settle. A `--no-update` flag would fold this back into the script.
 - Hub admin tokens are **write-only** in Cloudflare: `wrangler secret list` shows
   that `HUB_ADMIN_TOKEN` exists, never its value. Record it when you set it (the
   macOS keychain works well) rather than rotating it every time you need it.
