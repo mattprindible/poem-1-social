@@ -80,7 +80,13 @@ export async function routeFederationRequest(
 ): Promise<Response | null> {
   const url = new URL(request.url)
   const path = url.pathname
-  if (!path.startsWith("/federation/") && path !== "/hub/device") return null
+  if (
+    !path.startsWith("/federation/") &&
+    path !== "/hub/device" &&
+    path !== "/hub/device/events"
+  ) {
+    return null
+  }
 
   try {
     // ── Which device this hub relays to ──────────────────────────────────
@@ -103,6 +109,28 @@ export async function routeFederationRequest(
         await hubStore(env).setItem(NS.hub, DEVICE_ITEM, deviceId)
         return json({ ok: true, deviceId })
       }
+    }
+
+    // ── What the device has said back ────────────────────────────────────
+    // The return path for `events.send` in a Lua app (and for anything the
+    // firmware emits via publishEvent). Owner-gated, not device-ID-gated: a
+    // device ID is the credential for PUSHING to a device, and it is already
+    // known to this hub — but what a device EMITS is the owner's, and could
+    // carry anything an app chose to report.
+    //
+    // JSON, and read-only. This is the agent-drivable answer to "is my device
+    // actually alive, and what has it been doing" — deliberately not a
+    // dashboard.
+    if (path === "/hub/device/events" && request.method === "GET") {
+      await requireOwner(env, request)
+      const deviceId = await getDeviceId(env)
+      if (!deviceId) {
+        return json({ error: "no_device", message: "this hub has no device set" }, 404)
+      }
+      const limit = Number(url.searchParams.get("limit") ?? 50)
+      const agent = await getAgentByName(env.DeviceAgent, deviceId)
+      const report = await agent.recentEvents(Number.isFinite(limit) ? limit : 50)
+      return json({ deviceId, ...report })
     }
 
     // ── Outbound: push an app to someone else's device ───────────────────

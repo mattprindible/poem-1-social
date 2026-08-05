@@ -84,9 +84,11 @@ cat my-app.lua | ./send-app.sh --device-id <id>
 Apps in [`device-apps/`](device-apps/): `minute-clock`, `battery-watch`,
 `hello-status`, `first-light`, `hw-survey`, `nightfall` (a still night scene,
 drawn once and left alone — the calmest thing to leave on the panel), `standby`,
-plus two test fixtures — `runaway` (misbehaves deliberately, to exercise the
-escape hatch) and `federated-hello` (renders who pushed it, used by
-[`test-federation.sh`](test-federation.sh)).
+`phone-home` (reports back to the hub — see [Hearing the device](#hearing-the-device)),
+plus three test fixtures — `runaway` (misbehaves deliberately, to exercise the
+escape hatch), `wont-compile` (fails deliberately, to exercise the error
+channel; safe to push — it never draws) and `federated-hello` (renders who
+pushed it, used by [`test-federation.sh`](test-federation.sh)).
 
 > [!TIP]
 > **Hold the button for ~3 seconds to stop whatever is running** and forget it,
@@ -121,6 +123,59 @@ Once the device is on your hub it is **not** reachable on the public relay any
 more. If it ever can't reach a stored hub, it falls back to the public relay for
 the rest of that boot — keeping NVS intact and leaving you a way in — so a typo'd
 hostname costs a reboot, never a reflash.
+
+### Hearing the device
+
+Pushes go one way; the device's own reports come back the other. A Lua app calls
+stock Resident's `events.send(name, data)`, and the hub records what arrives:
+
+```sh
+curl -H "Authorization: Bearer $HUB_ADMIN_TOKEN" https://<your-hub>/hub/device/events
+```
+
+```json
+{ "deviceId": "…", "deviceConnected": true, "lastEventAt": 1785895724053,
+  "events": [ { "seq": 1, "at": 1785895724053, "channel": "app",
+                "type": "heartbeat", "body": "{…}" } ] }
+```
+
+Owner-gated, not device-ID-gated: a device ID is the credential for *pushing* to
+a device, but what a device *emits* is yours. `./send-app.sh device-apps/phone-home.lua`
+is a working example — it says hello on load, heartbeats slowly, and reports
+every button tap.
+
+Prefer `lastEventAt` to `deviceConnected` as proof of life. Durable Objects keep
+hibernating WebSockets from old boots, so the connection count can report a
+device that left hours ago; a recorded event cannot.
+
+On every connect the device announces itself and names the hub it thinks it
+reached — `{"type":"hello","host":"…","stored":true,"fellback":false}`. That is
+what `set-hub.sh` now waits for, so a hub switch is confirmed by the device
+rather than inferred from a connection count. When it can't (no owner token for
+the destination, or a destination not running this hub's code — the public relay,
+say) it falls back to counting and says so.
+
+The app-event side needed no reflash — `events.send` was in the firmware all
+along and only the hub had to listen. See
+[`server/src/device-agent.ts`](server/src/device-agent.ts).
+
+**Errors come back on the same path.** The firmware forwards the runtime's own
+telemetry, so a pushed app that fails no longer fails silently:
+
+```sh
+./send-app.sh device-apps/wont-compile.lua   # a fixture that is meant to fail
+```
+
+```json
+{ "type": "telemetry", "generationId": "d181", "name": "compile_error",
+  "data": { "error": "[string \"…\"]:25: unfinished string near …" } }
+```
+
+Names are `app_received`, `app_compiled`, `compile_error`, `runtime_error`,
+`log_error`, `app_restored`, and are lifted into the `name` field so errors are
+greppable. This half *does* require the firmware — telemetry comes from the
+runtime, not from Lua — so a device on older firmware still reports app events
+and simply stays quiet about errors.
 
 ## The social layer
 
@@ -244,6 +299,14 @@ second:
 - `sync.sh --flash` (reflashing a device already on Resident) is the verified
   path — see [Staying in sync](#staying-in-sync-with-resident) for its two
   safety gates.
+- **Known rough edge:** `sync.sh` couples two things — it updates Resident *and*
+  flashes. So reflashing a change to `device/src/main.cpp` also moves you to
+  whatever upstream Resident has become, which makes one reflash carry two
+  variables. When that matters, build with `pio run -e poem1 -d device` against
+  the cached dependency and run the same two gates by hand before
+  `pio run -e poem1 -t upload -d device`: confirm the pinned `upload_port`'s MAC
+  from `pio device list --json-output`, then push `standby.lua` and let the panel
+  settle. A `--no-update` flag would fold this back into the script.
 - Hub admin tokens are **write-only** in Cloudflare: `wrangler secret list` shows
   that `HUB_ADMIN_TOKEN` exists, never its value. Record it when you set it (the
   macOS keychain works well) rather than rotating it every time you need it.

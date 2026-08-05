@@ -32,10 +32,19 @@
 # ── WHAT A PASS ACTUALLY MEANS ───────────────────────────────────────────────
 # `mutual-push` asserts on `response.delivered` — the RECIPIENT's report about
 # its own device — not on the relay's 200, which only means "accepted for
-# delivery". Even then it means the device ACCEPTED the app, not that the Lua
-# compiled. For that, watch the panel or tap serial:
-#   uv run --with pyserial python3 tap.py /dev/cu.usbmodem101 30
-# (DTR asserted, RTS not — see the flash-safety notes in sync.sh.)
+# delivery". It then goes one further and asserts the device COMPILED it, by
+# reading the runtime's own `app_compiled` telemetry back off the owner's
+# /hub/device/events.
+#
+# That last step used to be impossible from here: delivery was as far as the
+# suite could see, and "did the Lua actually run" needed a human watching the
+# panel or a serial tap. The device return path closed that, so the strongest
+# claim this script can make no longer requires anyone to be in the room.
+#
+# It needs an owner token for the RECIPIENT hub (not just the sender's), and a
+# device on firmware that forwards telemetry. Without the token the case still
+# passes on delivery alone and says the compile went unverified — an honest
+# weaker claim rather than a silent one.
 #
 # ── CREDENTIALS ──────────────────────────────────────────────────────────────
 # Only SENDERS need one; a recipient's /federation/inbox takes no owner
@@ -97,6 +106,10 @@ KEYCHAIN_SERVICE="poem1-hub-admin"
 only=""
 verbose=0
 
+# Every case name, so --only can reject a typo instead of matching nothing and
+# reporting a green "passed 0". Keep in step with the `wanted` calls below.
+CASES="mutual-push bad-token unknown-handle sender-warns recipient-enforces"
+
 usage() {
   sed -n '2,60p' "$0" >&2
   exit 0
@@ -107,8 +120,11 @@ list_cases() {
 Cases, in the order they run:
 
   mutual-push          POSITIVE. $MUTUAL_HUB
-                       -> $OWNER_HANDLE, expect delivered to the device.
+                       -> $OWNER_HANDLE, expect delivered AND compiled on the
+                       device (read back from its own telemetry).
                        Needs: keychain token for $MUTUAL_WORKER, device online.
+                       Also a token for $OWNER_WORKER to check the compile —
+                       without it the case passes on delivery alone and says so.
 
   bad-token            The sender rejects a wrong owner credential (401/403).
                        Needs: nothing.
@@ -139,6 +155,12 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
+
+if [[ -n "$only" ]] && [[ " $CASES " != *" $only "* ]]; then
+  echo "test-federation: no such case '$only'." >&2
+  echo "  Known cases: $CASES" >&2
+  exit 2
+fi
 
 for tool in curl jq; do
   command -v "$tool" >/dev/null 2>&1 || {
@@ -174,6 +196,45 @@ push() {  # hub token to force
     --data-binary "$payload" --max-time 60 "${hub%/}/federation/push"
 }
 
+# Highest event seq a hub has recorded from its device. Empty — NOT 0 — when the
+# endpoint can't be used at all (no token, hub not running this code, no device
+# configured), because "no events yet" and "cannot look" must not be confused:
+# the first is a valid baseline of 0, the second means don't assert on compiles.
+latest_seq() {  # hub token
+  local hub="$1" token="$2"
+  [[ -z "$token" ]] && return 0
+  curl -sS -m 8 -H "Authorization: Bearer $token" \
+    "${hub%/}/hub/device/events?limit=1" 2>/dev/null \
+    | jq -r 'if .events then ((.events[0].seq) // 0) else empty end' 2>/dev/null
+}
+
+# The device's own verdict on the app it was just handed.
+# Prints: "compiled", "error:<lua message>", or "unknown" on timeout.
+#
+# Takes the EARLIEST matching event after the baseline, not the latest: a push
+# that fails to compile and a later one that succeeds must not be allowed to
+# overwrite each other's verdict.
+compile_verdict() {  # hub token since
+  local hub="$1" token="$2" since="$3" deadline v
+  deadline=$(( $(date +%s) + 25 ))
+  while [[ $(date +%s) -lt $deadline ]]; do
+    v=$(curl -sS -m 8 -H "Authorization: Bearer $token" \
+          "${hub%/}/hub/device/events?limit=25" 2>/dev/null \
+        | jq -r --argjson s "$since" '
+            (.events // [])
+            | map(select(.seq > $s
+                         and (.name == "app_compiled" or .name == "compile_error")))
+            | sort_by(.seq) | .[0]
+            | if . == null then empty
+              elif .name == "app_compiled" then "compiled"
+              else "error:" + (((.body | fromjson).data.error) // "?")
+              end' 2>/dev/null)
+    [[ -n "$v" ]] && { printf '%s' "$v"; return 0; }
+    sleep 2
+  done
+  printf 'unknown'
+}
+
 report() {  # verdict name detail
   case "$1" in
     PASS) passes=$((passes+1)); printf '  \033[32mPASS\033[0m  %-20s %s\n' "$2" "$3" ;;
@@ -199,10 +260,31 @@ if wanted mutual-push; then
   if [[ -z "$tok" ]]; then
     report SKIP mutual-push "no token for $MUTUAL_WORKER (see header)"
   else
+    # Baseline BEFORE the push, so the compile verdict below can only be about
+    # THIS app and not something the device reported earlier.
+    owner_tok=$(token_for "$OWNER_WORKER")
+    seq_before=$(latest_seq "$OWNER_HUB" "$owner_tok")
+
     code=$(push "$MUTUAL_HUB" "$tok" "$OWNER_HANDLE" 0)
     ok=$(jq -r '.ok // false' < "$BODY"); delivered=$(jq -r '.response.delivered // false' < "$BODY")
     if [[ "$code" == "200" && "$ok" == "true" && "$delivered" == "true" ]]; then
-      report PASS mutual-push "signed, verified, mutual-checked, delivered to device"
+      if [[ -z "$seq_before" ]]; then
+        report PASS mutual-push "delivered to device (compile UNVERIFIED — no token for $OWNER_WORKER)"
+      else
+        # Once — it polls, so a second call would re-wait and could disagree.
+        verdict=$(compile_verdict "$OWNER_HUB" "$owner_tok" "$seq_before")
+        case "$verdict" in
+          compiled)
+            report PASS mutual-push "signed, verified, mutual-checked, compiled ON the device" ;;
+          error:*)
+            report FAIL mutual-push "delivered but FAILED to compile: ${verdict#error:}" ;;
+          *)
+            # Delivered, but the device never said what it made of it. Most
+            # likely firmware predating telemetry forwarding — which is a real
+            # gap in the claim, not a detail, so it does not pass quietly.
+            report FAIL mutual-push "delivered but device never reported compiling it (firmware too old? reflash)" ;;
+        esac
+      fi
     elif [[ "$ok" == "true" ]]; then
       # Hubs agreed, device did not answer. Usually a deploy just restarted the
       # Durable Object and dropped the socket; it reconnects in seconds.
@@ -296,4 +378,24 @@ echo
 echo "passed $passes, failed $fails, skipped $skips"
 [[ "$skips" -gt 0 && "$fails" -eq 0 ]] && \
   echo "(skips are unconfigured hubs, not passes — see ./test-federation.sh --list)"
+
 [[ "$fails" -eq 0 ]] || exit 1
+
+# Nothing passing is a FAILURE, not a success.
+#
+# Exiting 0 here was the suite's own worst bug: `passed 0, failed 0, skipped 5`
+# is what you get from a locked keychain, a missing `security`, or hubs nobody
+# has configured — an environment where NOTHING was tested — and it exited green,
+# indistinguishable from a clean run. A gate whose most common broken state
+# reports success is worse than no gate, because it is trusted.
+#
+# Skips stay non-fatal on purpose (an unconfigured third hub should not look like
+# a broken push path), so the condition is "did anything actually pass", not
+# "did anything skip".
+if [[ "$passes" -eq 0 ]]; then
+  echo >&2
+  echo "test-federation: NOTHING RAN — 0 cases passed. This is not a pass." >&2
+  echo "  Usually: locked keychain, no tokens, or unconfigured hubs." >&2
+  echo "  See ./test-federation.sh --list for what each case needs." >&2
+  exit 1
+fi

@@ -107,6 +107,44 @@ the *charger circuit's* float voltage (~2070 mV, ×2 divider ≈ 4.1 V) — ther
 `gpio.pulse_stats(pin, ms)`, `i2c.scan()` / `i2c.read8(addr, reg)` /
 `i2c.readn(addr, reg, n)` (the I2C bus has no devices).
 
+### Talking back to the hub (`events`)
+
+```lua
+events.send('hello')                          -- name only
+events.send('temp', { c = 21, where = 'desk' })  -- + a FLAT table of strings/numbers
+```
+
+Publishes `{channel="app", type=<name>, data=…, from=<device id>, nonce, ts_ms}`
+over the same WebSocket the relay already uses — so you do **not** set `from`,
+and there is no `ctx.device_id` to read (see the `ctx` field list below).
+
+Returns `false` rather than raising when it is rate-limited, when the name is
+empty, or when the send fails — **check the return value** if you need to know
+it went out. The limiter is a token bucket shared by every emitter on the
+device: 5 events/s sustained, burst of 10. Keep heartbeats to once every few
+seconds, never per-tick.
+
+The hub records these; read them back with an owner credential:
+
+```sh
+curl -H "Authorization: Bearer $HUB_ADMIN_TOKEN" https://<your-hub>/hub/device/events
+```
+
+See `device-apps/phone-home.lua` for a working example.
+
+**Errors report themselves** — you do not need to catch anything. The firmware
+forwards the runtime's telemetry to the same endpoint, so a compile or runtime
+failure shows up there with the Lua message and line number, rather than only on
+the serial console:
+
+```json
+{ "name": "compile_error", "data": { "error": "[string \"…\"]:25: unfinished string near …" } }
+```
+
+Also emitted: `app_received`, `app_compiled`, `runtime_error`, `log_error`
+(from `log.error(msg)`), `app_restored`. `on_tick` errors are rate-limited at
+the source; `init` and `on_event` errors go out immediately.
+
 ## App lifecycle
 
 ```lua

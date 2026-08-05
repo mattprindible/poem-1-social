@@ -218,14 +218,62 @@ at once. Cache aggressively; treat the graph as advisory state, not live truth.
    firmware binary serves everybody, which removes a per-person build from the
    onboarding path.
 
-5. **Devices still can't talk back.** `DeviceAgent.onMessage` is a no-op, so
-   nothing the device emits reaches the hub. This bites already: `set-hub.sh` can
-   only confirm a hub switch by watching the destination's connection count rise,
-   which is best-effort — Durable Objects keep hibernating WebSockets from old
-   boots, so a hub the device left hours ago still reports connections, and a
-   naive non-zero check produced a confident false positive during testing.
-   Overriding `onMessage` is the fix, and it is also the compile/runtime error
-   feedback channel. Probably the first thing to build on the hub after identity.
+5. **Devices can talk back — BUILT and verified 2026-08-04.** Upstream's
+   `DeviceAgent.onMessage` is an empty function, so everything a device emitted
+   reached the hub and was dropped. `server/src/device-agent.ts` subclasses it
+   (exported under the same name, so the Durable Object needs no migration),
+   records device frames in a bounded SQLite ring, and serves them at
+   owner-gated `GET /hub/device/events`.
+
+   The emit half was already in stock Resident — `events.send` in Lua,
+   `publishEvent` in C++ — so this was a **hub change with no reflash**, which is
+   why it was cheaper than its position in this list suggested.
+
+   Verified end to end on hardware: `device-apps/phone-home.lua` pushed over the
+   air, and `hello` / `heartbeat` / `button` frames read back out of the hub with
+   the device's own `from`, `nonce` and local clock on them.
+
+   **Errors now come back too (2026-08-04, same branch).** `main.cpp` wires
+   `setTelemetryCallback` straight to `ws().sendText`, so the runtime's own
+   `compile_error` / `runtime_error` / `log_error` reach the hub verbatim. This
+   half *did* need a reflash — telemetry is emitted by the runtime, not by Lua,
+   so no app could ever have forwarded it.
+
+   That closes a genuinely bad loop: a pushed app that failed to compile used to
+   be indistinguishable from one that worked. The push returned 200 (the relay
+   delivered it — that is all it ever promised), the panel kept showing the
+   previous app, and the reason lived only on a serial port. Untenable once apps
+   arrive from other people, since the sender has no cable and the recipient has
+   no reason to hold one.
+
+   Verified with `device-apps/wont-compile.lua`: the Lua message arrives intact,
+   with a line number — `:25: unfinished string near ''this string never
+   closes'` — as does a runtime fault from `init` (`:4: attempt to index a nil
+   value (local 'x')`).
+
+   Forwarded verbatim rather than re-wrapped, and deliberately NOT routed
+   through `publishEvent`: that shares a 5/s token bucket with the app's own
+   `events.send`, so an app erroring in a loop would spend the budget it needs
+   to report anything else. Errors must not be the thing that silences the error
+   channel.
+
+   **`set-hub.sh` now confirms by the device's own word.** This needed one more
+   firmware change than expected: nothing was sent on connect, so there was
+   nothing to observe after a switch — a hub reconnect doesn't reboot, so no
+   boot telemetry fires either. `onConnected` now sends
+   `{"type":"hello","host":…}` naming the hub the device believes it reached, via
+   `sendSystem` (control plane — it must not spend the app's 5/s event budget).
+
+   A hello that arrives AT the destination and NAMES the destination is proof in
+   a way no count is: the device is the only party that knows where it landed,
+   and a stale hello from a previous hub names the previous hub, so it can't be
+   mistaken for a fresh arrival. Compared against a pre-send `seq` rather than a
+   clock, so it doesn't depend on this machine and Cloudflare agreeing on time.
+
+   The count heuristic survives as a **fallback**, because the proof needs an
+   owner token for the destination and a destination running this hub's code —
+   neither true when moving to the public relay or to a hub you don't own. The
+   script says which one it used; the fallback prints its own caveat.
 
 ## The real bottleneck
 
