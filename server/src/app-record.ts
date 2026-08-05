@@ -72,10 +72,16 @@ export class AppError extends Error {
  * Derive a record key from a name.
  *
  * Name-derived rather than random (TID) so that re-publishing the same app
- * UPDATES it instead of littering the repo with near-duplicates. That is what
- * makes the repo's own history the app's version history — the property the
- * whole design is buying — and it makes an app referable as `handle/name`
- * without a lookup table.
+ * UPDATES it instead of littering the repo with near-duplicates, and so an app
+ * is referable as `handle/name` without a lookup table.
+ *
+ * What that does NOT buy is retrievable history. Verified against a live PDS:
+ * a superseded CID answers `RecordNotFound`. A repo holds current state; the
+ * `cid` parameter on getRecord is a precondition check ("still the version I
+ * expect?"), not a way back to an old one. So versions are *identifiable* and
+ * *change-detectable*, but anyone who wants to run an exact past version has to
+ * have kept it. That is a live constraint on pinning — see "update semantics"
+ * in docs/social-plan.md.
  *
  * The cost is that renaming an app creates a new one and orphans the old rkey.
  * Correct, on balance: the rkey is the app's identity, and a thing whose

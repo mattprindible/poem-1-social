@@ -125,8 +125,10 @@ field added to that envelope is one this project is committing to forever.
 | `DELETE /apps/<rkey>` 🔒 | unpublish (your repo only) |
 
 An app is a record in its author's own atproto repo, `is.mfd.poem1.app`, keyed
-by a slug derived from its name — so re-publishing a name is an **edit**, and the
-repo's history is the version history. A reference is `minute-clock` (yours),
+by a slug derived from its name — so re-publishing a name is an **edit** that
+mints a new CID. Note that a repo holds *current state*, not an archive: a
+superseded CID answers `RecordNotFound`, so versions are identifiable and
+change-detectable but not recoverable. A reference is `minute-clock` (yours),
 `alice.bsky.social/minute-clock` (hers), or a full `at://…` URI; the same grammar
 works in `/federation/push` and `/hub/device/app`.
 

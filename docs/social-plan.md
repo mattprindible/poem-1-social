@@ -130,10 +130,17 @@ Apps are **durable artifacts, not throwaway pushes**. An app is an atproto recor
 
 The record key is derived from the app's **name**, not a random TID. That is the
 decision the rest of this section rests on: re-publishing the same name is an
-*edit*, so the repo's own history is the app's version history, and an app is
-referable as `handle/name` with no lookup table. The cost is that renaming
-creates a new app and orphans the old key — correct, on balance, since the rkey
-is the app's identity.
+*edit* that mints a new CID, and an app is referable as `handle/name` with no
+lookup table. The cost is that renaming creates a new app and orphans the old
+key — correct, on balance, since the rkey is the app's identity.
+
+**A repo is not an archive** (verified against a live PDS, 2026-08-05). Asking
+for a superseded CID returns `RecordNotFound`; the `cid` parameter on
+`getRecord` is a *precondition check* — "is this still the version I expect" —
+not a way back to an old one. Versions are therefore identifiable and
+change-detectable but **not recoverable from the network**. Anyone who wants to
+run an exact past version must have kept a copy. This was assumed the other way
+round when the section was first written, and it constrains pinning directly.
 
 **References resolve sender-side, and that is the load-bearing constraint.**
 `/federation/push` takes `{app}` as well as `{code}`, but the sending hub turns
@@ -244,6 +251,15 @@ at once. Cache aggressively; treat the graph as advisory state, not live truth.
    pinned app is state on the recipient's side, and nothing on the device or in
    its hub currently remembers which version of whose app it is running. That is
    the next piece of this decision, not another round of arguing the default.
+
+   *And a pin cannot mean what it first sounds like.* Because superseded CIDs
+   are unreachable (above), "pin to a CID" can only mean **detect that it
+   changed and decline** — it cannot mean "keep fetching the version I chose",
+   because that version is gone from the network the moment the author edits.
+   Honouring a pin across a reboot therefore requires the recipient to STORE the
+   Lua, not just the CID. That is a much larger commitment than it looked, and
+   it argues for framing the feature as *consent to updates* rather than as
+   version control.
 2. **Moderation / blocking.** Mutual-follow is a weak proxy for tie strength;
    people mutual-follow strangers. Revocation and per-person blocking need to be
    first-class, not an afterthought.
