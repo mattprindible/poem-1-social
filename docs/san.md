@@ -204,10 +204,16 @@ wrangler secret put` pipes npm's banner into the secret, so the hub reports
 failure. Fixed in both READMEs. This is the argument for rehearsing onboarding
 rather than reasoning about it.
 
-Cleanup: all five orphaned `is.mfd.poem1.*` records deleted, verified by
-listing every collection in all three repos. `poem1-hub` is superseded but left
-deployed for now — deleting a Worker destroys its Durable Objects, and nothing
-depends on it (the device's own fallback is the public relay, not this).
+Cleanup, finished 2026-08-05: all five orphaned `is.mfd.poem1.*` records
+deleted, verified by listing every collection in every repo; the three
+superseded workers (`poem1-hub`, `poem1-hub-haha`, `poem1-hub-idiot`) deleted,
+along with their now-dead keychain tokens. Suite 6/6 afterwards and the device
+still reporting on `mfd-hub`.
+
+Deletion was left until last on purpose. Removing a Worker destroys its Durable
+Objects irreversibly, so it should follow the evidence that nothing needs them —
+every hub record repointed, every hub reclaimed, a green suite — rather than
+precede it.
 
 Original reasoning, kept: first, because cost grows with every record published
 under the old NSID, and because the schema cannot be published until the type is
