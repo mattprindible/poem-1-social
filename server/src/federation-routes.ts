@@ -12,6 +12,8 @@ import { NS, hubStore } from "./hub-store"
 import { IdentityError, resolveIdentity } from "./identity"
 import { describeError, getOwner } from "./oauth-routes"
 import { AuthError, requireOwner } from "./auth"
+import { AppError } from "./app-record"
+import { resolveAppRef } from "./app-routes"
 
 // The federated push path.
 //
@@ -74,6 +76,60 @@ async function deliverAppToDevice(
   )
 }
 
+/** What was pushed, for the RESPONSE — never for the wire. See sourceFor(). */
+interface Provenance {
+  app: { name: string; rkey: string; uri: string; cid: string; author: string }
+}
+
+/**
+ * Work out what Lua to send, from either half of the push grammar:
+ *
+ *   { code }  raw source, as it has always been
+ *   { app }   a reference into somebody's published library (app-routes.ts)
+ *
+ * Both collapse to a string of Lua before anything leaves this hub, which is
+ * deliberate. The federation wire format is OURS and frozen at {type, code};
+ * peers run hubs we cannot update, so every field added there is one we are
+ * committing to support forever. Resolving references SENDER-side means app
+ * records cost the protocol nothing — a recipient on the old code path cannot
+ * tell the difference, because there is no difference.
+ *
+ * The provenance comes back for the caller's benefit only. Whether the
+ * RECIPIENT should learn the name and CID of what landed on their device is a
+ * real question, and a genuine extension to the wire — see "update semantics"
+ * in docs/social-plan.md. It is not settled, so it is not shipped.
+ */
+async function sourceFor(
+  env: Env,
+  origin: string,
+  body: { code?: string; app?: string },
+): Promise<{ code: string; provenance?: Provenance }> {
+  if (body.code !== undefined && body.app !== undefined) {
+    throw new AppError("give either { code } or { app }, not both")
+  }
+  if (body.code !== undefined) {
+    if (!body.code.trim()) throw new AppError("app source is empty")
+    return { code: body.code }
+  }
+  if (body.app === undefined) {
+    throw new AppError("need { code } or { app }")
+  }
+
+  const { entry, author } = await resolveAppRef(env, origin, body.app)
+  return {
+    code: entry.value.code,
+    provenance: {
+      app: {
+        name: entry.value.name,
+        rkey: entry.rkey,
+        uri: entry.uri,
+        cid: entry.cid,
+        author,
+      },
+    },
+  }
+}
+
 export async function routeFederationRequest(
   request: Request,
   env: Env,
@@ -83,7 +139,8 @@ export async function routeFederationRequest(
   if (
     !path.startsWith("/federation/") &&
     path !== "/hub/device" &&
-    path !== "/hub/device/events"
+    path !== "/hub/device/events" &&
+    path !== "/hub/device/app"
   ) {
     return null
   }
@@ -133,6 +190,38 @@ export async function routeFederationRequest(
       return json({ deviceId, ...report })
     }
 
+    // ── Run an app on YOUR OWN device ────────────────────────────────────
+    // The local half of the same grammar: `{ app }` from your library or
+    // anyone's, `{ code }` for something you have not published.
+    //
+    // send-app.sh posts raw Lua to the relay's /devices/<id>/send and always
+    // will — it is the cable-and-a-file path, and it deliberately needs no
+    // login. This route is for the case that path cannot serve: running
+    // something with a NAME, out of a library, without a copy of the file.
+    if (path === "/hub/device/app" && request.method === "POST") {
+      await requireOwner(env, request)
+      const deviceId = await getDeviceId(env)
+      if (!deviceId) {
+        return json({ error: "no_device", message: "this hub has no device set" }, 404)
+      }
+
+      const body = (await request.json()) as { app?: string; code?: string }
+      const { code, provenance } = await sourceFor(env, url.origin, body)
+
+      const res = await deliverAppToDevice(env, deviceId, code)
+      const detail = await res.text()
+      return json(
+        {
+          ok: res.ok,
+          deviceId,
+          ...(provenance ?? {}),
+          deviceStatus: res.status,
+          message: res.ok ? "app delivered to device" : detail || "device not connected",
+        },
+        res.ok ? 200 : 503,
+      )
+    }
+
     // ── Outbound: push an app to someone else's device ───────────────────
     if (path === "/federation/push" && request.method === "POST") {
       // Without this, a stranger could make this hub push arbitrary code to
@@ -143,10 +232,16 @@ export async function routeFederationRequest(
         return json({ error: "unclaimed", message: "sign in at /oauth/login first" }, 409)
       }
 
-      const body = (await request.json()) as { to?: string; code?: string; force?: boolean }
-      if (!body.to || !body.code) {
-        return json({ error: "bad_request", message: "need { to, code }" }, 400)
+      const body = (await request.json()) as {
+        to?: string
+        code?: string
+        app?: string
+        force?: boolean
       }
+      if (!body.to) {
+        return json({ error: "bad_request", message: "need { to } and { code } or { app }" }, 400)
+      }
+      const { code, provenance } = await sourceFor(env, url.origin, body)
 
       // Where does the recipient keep their hub? Straight out of their repo.
       const recipient = await resolveIdentity(body.to)
@@ -187,7 +282,7 @@ export async function routeFederationRequest(
       // run hubs we cannot update, so anything added here we are committing to
       // supporting forever. Translation to whatever the recipient's device
       // currently speaks happens at the boundary, in deliverAppToDevice().
-      const payload = JSON.stringify({ type: "app", code: body.code })
+      const payload = JSON.stringify({ type: "app", code })
       const headers = await signOutbound(env, {
         sender: owner,
         recipient: recipient.did,
@@ -202,6 +297,7 @@ export async function routeFederationRequest(
         {
           ok: res.ok,
           to: { handle: recipient.handle ?? body.to, did: recipient.did, hub: record.endpoint },
+          ...(provenance ?? {}),
           status: res.status,
           response: (() => {
             try {
@@ -282,6 +378,9 @@ export async function routeFederationRequest(
     }
     if (err instanceof FederationError) {
       return json({ error: "federation_error", message: err.message }, err.status)
+    }
+    if (err instanceof AppError) {
+      return json({ error: "app_error", message: err.message }, err.status)
     }
     if (err instanceof IdentityError) {
       return json({ error: "identity_error", message: err.message }, err.status)
