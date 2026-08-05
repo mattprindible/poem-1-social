@@ -23,6 +23,7 @@ import {
   releaseDevice,
 } from "./devices"
 import { resolveAppRef } from "./app-routes"
+import { hubProfiles } from "./capabilities"
 
 // The federated push path.
 //
@@ -413,6 +414,74 @@ export async function routeFederationRequest(
         },
         res.ok ? 200 : 502,
       )
+    }
+
+    // ── Outbound: ask a mutual what they can accept ──────────────────────
+    // Probe, do not remember. The answer is fetched live every time and is
+    // deliberately NOT cached anywhere: the whole point is that a belief about
+    // someone else's hardware goes stale silently, and a stale belief gets
+    // acted on with more confidence than no belief at all.
+    if (path.startsWith("/federation/probe/") && request.method === "GET") {
+      await requireOwner(env, request)
+      const owner = await getOwner(env)
+      if (!owner) return json({ error: "unclaimed" }, 409)
+
+      const subject = decodeURIComponent(path.slice("/federation/probe/".length))
+      const peer = await resolveIdentity(subject)
+      const record = await fetchHubRecordFor(peer.did, peer.pds)
+      if (!record) {
+        return json(
+          { error: "no_hub", message: `${subject} publishes no hub record` },
+          404,
+        )
+      }
+
+      // Signed exactly like a push, because it IS the same trust question asked
+      // in the other direction — and reusing the path means discovery cannot
+      // drift into a second, weaker way of proving who is asking.
+      const payload = JSON.stringify({ type: "capabilities" })
+      const headers = await signOutbound(env, {
+        sender: owner,
+        recipient: peer.did,
+        body: payload,
+      })
+      const target = `${record.endpoint.replace(/\/$/, "")}/federation/capabilities`
+      const res = await fetch(target, { method: "POST", headers, body: payload })
+      const text = await res.text()
+
+      return json(
+        {
+          ok: res.ok,
+          peer: { handle: peer.handle ?? subject, did: peer.did, hub: record.endpoint },
+          probedAt: new Date().toISOString(),
+          status: res.status,
+          response: (() => {
+            try {
+              return JSON.parse(text)
+            } catch {
+              return text
+            }
+          })(),
+        },
+        res.ok ? 200 : 502,
+      )
+    }
+
+    // ── Inbound: a mutual asking what we can accept ──────────────────────
+    // Same authentication as the inbox — signature, then mutual follow — and
+    // mutuals only on purpose. What hardware someone owns is theirs to
+    // disclose; a mutual can already push code to it, so learning what SHAPE to
+    // push is strictly less than what they hold already. Refusing would only
+    // mean they push blind.
+    if (path === "/federation/capabilities" && request.method === "POST") {
+      const owner = await getOwner(env)
+      if (!owner) return json({ error: "unclaimed", message: "this hub has no owner" }, 409)
+
+      const bodyText = await request.text()
+      const senderDid = await verifyInbound(env, request, bodyText, owner)
+      await requireMutual(owner, senderDid, "ask what this hub can accept")
+
+      return json({ profiles: await hubProfiles(env) })
     }
 
     // ── Inbound: someone else's hub pushing to our device ────────────────

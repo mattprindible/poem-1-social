@@ -13,14 +13,30 @@
 // none, or staying silent — which a real device cannot be asked to do.
 //
 //   node tools/fake-device.mjs <hub-host> <device-id> [flags]
-//     --no-key     answer nothing (the downgrade attempt)
-//     --wrong-key  sign correctly with a DIFFERENT key (the impostor who read
-//                  the device id off the screen)
-//     --fresh      forget the stored key and generate a new one
+//     --no-key      answer nothing (the downgrade attempt)
+//     --wrong-key   sign correctly with a DIFFERENT key (the impostor who read
+//                   the device id off the screen)
+//     --fresh       forget the stored key and generate a new one
+//     --type T      what board to claim to be (default poem1)
+//     --screen WxH  what display to claim (default 960x540)
+//     --hold N      stay connected N seconds instead of exiting on the verdict
+//
+// The --type/--screen flags are what make this a network simulator rather than
+// a single test double: a hub's whole point is carrying DIFFERENT hardware, and
+// the interesting discovery questions ("can they run what I wrote?") need more
+// than one shape to be questions at all. Standing up an M5Stick next to a Poem/1
+// costs a flag here and a soldering iron otherwise.
 
 const [host, deviceId, ...flags] = process.argv.slice(2)
 const noKey = flags.includes("--no-key")
 const wrongKey = flags.includes("--wrong-key")
+const flagVal = (name, fallback) => {
+  const i = flags.indexOf(name)
+  return i === -1 ? fallback : flags[i + 1]
+}
+const devType = flagVal("--type", "poem1")
+const [scrW, scrH] = flagVal("--screen", "960x540").split("x").map(Number)
+const hold = Number(flagVal("--hold", "0"))
 
 const b64 = (buf) => Buffer.from(buf).toString("base64")
 
@@ -78,13 +94,23 @@ ws.onmessage = async (ev) => {
       type: "identify",
       pubkey,
       sig: b64(sig),
-      device: { deviceType: "poem1", screen: { w: 960, h: 540, colors: 2 }, fw: "fake-device" },
+      device: {
+        deviceType: devType,
+        screen: { w: scrW, h: scrH },
+        fw: "fake-device",
+      },
     }))
     return
   }
 
   if (msg.type === "identified") {
-    done(`RESULT state=${msg.state}${msg.fingerprint ? ` fingerprint=${msg.fingerprint}` : ""}`)
+    const line = `RESULT state=${msg.state}${msg.fingerprint ? ` fingerprint=${msg.fingerprint}` : ""}`
+    if (hold > 0) {
+      console.log(`${line} (holding ${hold}s)`)
+      setTimeout(() => done("done holding"), hold * 1000)
+      return
+    }
+    done(line)
   }
 }
 

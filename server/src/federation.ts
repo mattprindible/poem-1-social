@@ -230,13 +230,24 @@ export async function getRelationship(
 }
 
 /** Strong tie = mutual follow. Anything less may not push code. */
-export async function requireMutual(ownerDid: string, senderDid: string): Promise<Relationship> {
+/**
+ * `action` only changes the wording. The refusal always names the RELATIONSHIP
+ * — that is the part the suite asserts on, and the part that says why. But a
+ * capabilities probe being refused for "only mutuals may push apps" describes
+ * the wrong operation to whoever reads it, and a message that misdescribes what
+ * was refused is a small lie in the place people go when confused.
+ */
+export async function requireMutual(
+  ownerDid: string,
+  senderDid: string,
+  action = "push apps",
+): Promise<Relationship> {
   const rel = await getRelationship(ownerDid, senderDid)
   if (!rel.mutual) {
     throw new FederationError(
       `${senderDid} is not a mutual of ${ownerDid} ` +
         `(following: ${rel.following}, followedBy: ${rel.followedBy}) — ` +
-        `only mutuals may push apps`,
+        `only mutuals may ${action}`,
       403,
     )
   }

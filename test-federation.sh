@@ -102,6 +102,9 @@ OWNER_HANDLE="${POEM1_OWNER_HANDLE:-mfd.is}"
 OWNER_HUB="${POEM1_OWNER_HUB:-https://mfd-hub.service-cloudflare-442.workers.dev}"
 OWNER_WORKER="${POEM1_OWNER_WORKER:-mfd-hub}"
 
+# The mutual needed no handle until discovery: it only ever SENT, and a sender
+# is identified by the DID in its signature. Probing runs the other way.
+MUTUAL_HANDLE="${POEM1_MUTUAL_HANDLE:-idiot.town}"
 MUTUAL_HUB="${POEM1_MUTUAL_HUB:-https://idiot-hub.service-cloudflare-442.workers.dev}"
 MUTUAL_WORKER="${POEM1_MUTUAL_WORKER:-idiot-hub}"
 
@@ -124,7 +127,7 @@ verbose=0
 
 # Every case name, so --only can reject a typo instead of matching nothing and
 # reporting a green "passed 0". Keep in step with the `wanted` calls below.
-CASES="mutual-push record-push relay-closed device-identity bad-token unknown-handle sender-warns recipient-enforces"
+CASES="mutual-push record-push relay-closed device-identity discovery bad-token unknown-handle sender-warns recipient-enforces"
 
 usage() {
   sed -n '2,60p' "$0" >&2
@@ -160,6 +163,12 @@ Cases, in the order they run:
                        challenge) receives nothing. Uses tools/fake-device.mjs
                        against a scratch device id — never your real hardware.
                        Needs: token for $OWNER_WORKER, node 22+.
+
+  discovery            A mutual can ask what this hub accepts and gets device
+                       PROFILES — never ids, names or counts. A non-mutual is
+                       refused. Duplicate devices must collapse, or the answer
+                       becomes a device count.
+                       Needs: token for $OWNER_WORKER and $MUTUAL_WORKER, node.
 
   bad-token            The sender rejects a wrong owner credential (401/403).
                        Needs: nothing.
@@ -524,7 +533,64 @@ if wanted device-identity; then
   fi
 fi
 
-# ── 5. A wrong credential is refused ─────────────────────────────────────────
+# ── 5. The network answers questions about itself ────────────────────────────
+# Discovery is a live question, never a cached belief: someone retires a board or
+# adds one, and a remembered answer keeps being acted on with confidence long
+# after it stopped being true.
+#
+# The assertions are as much about what is NOT returned. A device id is a
+# credential on the relay, so discovery must never become the thing that moves
+# one between hubs — and a list that did not deduplicate would be a device count,
+# which is nobody's business either. Two identical devices, one profile.
+if wanted discovery; then
+  otok=$(token_for "$OWNER_WORKER"); mtok=$(token_for "$MUTUAL_WORKER")
+  a="disco$$a"; b="disco$$b"
+  if [[ -z "$otok" || -z "$mtok" ]]; then
+    report SKIP discovery "need tokens for both $OWNER_WORKER and $MUTUAL_WORKER"
+  elif ! command -v node >/dev/null 2>&1; then
+    report SKIP discovery "node not available"
+  else
+    mhost="${MUTUAL_HUB#*://}"; mhost="${mhost%%/*}"
+    for d in "$a" "$b"; do
+      curl -sS -m 20 -o /dev/null -H "Authorization: Bearer $mtok" -H "Content-Type: application/json" \
+        -X POST --data-binary "{\"deviceId\":\"$d\"}" "${MUTUAL_HUB%/}/hub/devices"
+      curl -sS -m 20 -o /dev/null -H "Authorization: Bearer $mtok" \
+        -X POST "${MUTUAL_HUB%/}/hub/devices/$d/pair"
+      rm -f "/tmp/fake-device-$d.jwk"
+      # Both claim to be the SAME board: the dedup assertion below is the point.
+      node tools/fake-device.mjs "$mhost" "$d" --type suitesim --screen 111x222 >/dev/null 2>&1
+    done
+
+    code=$(curl -sS -o "$BODY" -w "%{http_code}" -m 30 -H "Authorization: Bearer $otok" \
+      "${OWNER_HUB%/}/federation/probe/$MUTUAL_HANDLE")
+    sims=$(jq -r '[.response.profiles[]? | select(.deviceType=="suitesim")] | length' < "$BODY" 2>/dev/null)
+    leaked=$(jq -r '[.response.profiles[]? | keys[]] | unique | join(",")' < "$BODY" 2>/dev/null)
+
+    # And a non-mutual must not be able to ask at all.
+    refused=$(curl -sS -o /dev/null -w "%{http_code}" -m 30 -H "Authorization: Bearer $otok" \
+      "${OWNER_HUB%/}/federation/probe/$STRANGER_HANDLE")
+
+    for d in "$a" "$b"; do
+      curl -sS -m 20 -o /dev/null -X DELETE -H "Authorization: Bearer $mtok" \
+        "${MUTUAL_HUB%/}/hub/devices/$d"
+      rm -f "/tmp/fake-device-$d.jwk"
+    done
+
+    if [[ "$code" != "200" ]]; then
+      report FAIL discovery "probing a mutual failed: HTTP $code"
+    elif [[ "$sims" != "1" ]]; then
+      report FAIL discovery "two identical devices produced $sims profile(s) — the answer is a device COUNT"
+    elif [[ "$leaked" == *"deviceId"* || "$leaked" == *"name"* || "$leaked" == *"key"* ]]; then
+      report FAIL discovery "PROFILES LEAKED IDENTITY: fields were $leaked"
+    elif [[ "$refused" == "200" ]]; then
+      report FAIL discovery "a NON-MUTUAL answered a capabilities probe"
+    else
+      report PASS discovery "mutual described by shape only ($leaked); non-mutual refused ($refused)"
+    fi
+  fi
+fi
+
+# ── 6. A wrong credential is refused ─────────────────────────────────────────
 # Cheap, but it guards a real hole: without requireOwner, anyone knowing the hub
 # URL could make it push to every one of its owner's mutuals, signed as them.
 # Hub URLs are published in atproto repos, so they are public by design.
@@ -537,7 +603,7 @@ if wanted bad-token; then
   fi
 fi
 
-# ── 6. Discovery fails cleanly ───────────────────────────────────────────────
+# ── 7. Discovery fails cleanly ───────────────────────────────────────────────
 if wanted unknown-handle; then
   tok=$(token_for "$MUTUAL_WORKER")
   if [[ -z "$tok" ]]; then
@@ -553,7 +619,7 @@ if wanted unknown-handle; then
   fi
 fi
 
-# ── 7. The sender's advisory check ───────────────────────────────────────────
+# ── 8. The sender's advisory check ───────────────────────────────────────────
 if wanted sender-warns; then
   tok=$(token_for "$OWNER_WORKER")
   has_hub=$(curl -s -m 20 "${OWNER_HUB%/}/hub/peer/$STRANGER_HANDLE" | jq -r '.found // false')
@@ -571,7 +637,7 @@ if wanted sender-warns; then
   fi
 fi
 
-# ── 8. The recipient enforces, independently ─────────────────────────────────
+# ── 9. The recipient enforces, independently ─────────────────────────────────
 # force:true skips the SENDER's advisory check on purpose. What is left is the
 # recipient's own answer, which is the only one that was ever enforcement. A
 # hostile sender would not run the courtesy check either — this simulates that

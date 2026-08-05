@@ -54,6 +54,8 @@ Commands:
   pair ID                 Open a pairing window, then reconnect the device to
                           bind its identity key. Re-pairing clears the old key —
                           that is how a reflashed device gets back in.
+  probe WHO               Ask a mutual's hub what it can accept. Live every
+                          time — nothing here is cached, on purpose.
   lexicon                 Does this project's schema resolve? (DNS + records)
   lexicon publish         Publish the schemas into your repo. Only meaningful
                           for the account the authority's TXT record names.
@@ -280,6 +282,21 @@ case "$cmd" in
     [[ -z "$id" ]] && { echo "apps: release needs a device ID" >&2; exit 2; }
     status=$(call DELETE "/hub/devices/$(urlenc "$id")" "" --auth)
     finish "$status" '"\(.message) (\(.deviceId))"'
+    ;;
+
+  probe)
+    who="${args[0]:-}"
+    [[ -z "$who" ]] && { echo "apps: probe needs a handle or DID" >&2; exit 2; }
+    status=$(call GET "/federation/probe/$(urlenc "$who")" "" --auth)
+    finish "$status" '
+      "\(.peer.handle) — \(.peer.hub)\n" +
+      (if (.response.profiles | length) == 0
+       then "  (no devices, or none it will describe)"
+       else ([.response.profiles[] |
+              "  \(.deviceType)" +
+              (if .screen then "  \(.screen.w)x\(.screen.h)" else "" end) +
+              "  (said by \(.source))"] | join("\n"))
+       end)'
     ;;
 
   lexicon)

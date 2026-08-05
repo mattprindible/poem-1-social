@@ -1,11 +1,10 @@
 # SAN — the Social Area Network
 
-**Status:** definition agreed 2026-08-05, and stages 1, 2, 3 and 5 **built and
+**Status:** definition agreed 2026-08-05, and stages 1, 2, 3, 5 and 6 **built and
 verified the same day** — namespace, lexicon, device claiming, many devices per
 hub, and the naming sweep. Stage 4 (device identity and self-description) has
 its **hub half built and proven against a simulated device**; the firmware half
-is designed, unwritten, and needs a reflash. Stage 6 (discovery by probing) is
-designed and unbuilt.
+is designed, unwritten, and needs a reflash — it is the only thing left.
 
 It exists because the working code had drifted into assumptions nobody chose:
 one hub means one device, and the record types carried a personal handle and a
@@ -363,7 +362,7 @@ Poem/1 panel compiles cleanly on an M5Stick and renders garbage, and the error
 channel reports success. A push can only be checked for compatibility if
 something knows what the target actually is.
 
-### 5. Discovery: probe, do not remember
+### 5. Discovery: probe, do not remember — BUILT 2026-08-05
 
 The half that makes the rest matter. **A hub should never hold a cached belief
 about what a mutual has; it should ask.** Beliefs go stale silently — someone
@@ -387,7 +386,19 @@ Mutuals only, because what hardware someone owns is theirs to disclose. A mutual
 can already push code to your device; learning what shape to push is strictly
 less than that, and refusing it would only mean they push blind.
 
-Cached, if at all, with a short TTL and always revalidated — the point is to ask.
+Nothing is cached anywhere. Not "short TTL" — none. A cache here would be a
+belief with a timer on it, and the failure it invites (acting confidently on a
+board someone retired) is exactly what the stage is against.
+
+**Deduplication is a privacy property, not tidiness.** A list that did not
+collapse identical devices would be a device count. Verified: four devices on a
+peer's hub, three profiles returned, and the response carries only
+`deviceType`, `screen` and `source` — no ids, no names, no keys. The suite's
+`discovery` case asserts all of it, including that a non-mutual is refused.
+
+`source` is kept rather than smoothed away: "the device says it is a Poem/1" and
+"someone typed poem1" are different claims, and a peer choosing what to push
+should be able to tell which one it got.
 
 ### 6. Device type, end to end (superseded by stage 4 above)
 
