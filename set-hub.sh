@@ -133,8 +133,15 @@ echo "Current hub: $base_url" >&2
 echo "Destination: $target_url" >&2
 
 # Connection count at a hub, or empty if it can't be read.
+#
+# Owner-gated since the relay gate landed — the bare status route is a presence
+# oracle for anyone probing device ids, so it now needs a credential like every
+# other route under /devices/. Empty when we have no token for that hub, which
+# the fallback below already treats as "cannot look".
 hub_conn_count() {
-  curl -sS -m 5 "$1/devices/${device_id}" 2>/dev/null \
+  local tok; tok=$(token_for_hub "${1#*://}")
+  [[ -z "$tok" ]] && return 0
+  curl -sS -m 5 -H "Authorization: Bearer $tok" "$1/devices/${device_id}" 2>/dev/null \
     | sed -n 's/^connections: \([0-9][0-9]*\).*/\1/p' | head -1
 }
 
@@ -191,13 +198,25 @@ else
   echo "  make a departed device still look present. Confirm on the panel." >&2
 fi
 
+# The CURRENT hub is the one being asked to relay set_hub, so the credential
+# has to be for that host, not the destination. Pushing to a device is
+# owner-only since the relay gate landed; the public relay needs no token and
+# ignores one, so an absent token is not an error here.
+send_token=$(token_for_hub "${base_url#*://}")
+send_auth=()
+[[ -n "$send_token" ]] && send_auth=(-H "Authorization: Bearer $send_token")
+
 http_code=$(curl -sS -o /dev/null -w "%{http_code}" \
-  -X POST -H "Content-Type: application/json" \
+  -X POST -H "Content-Type: application/json" "${send_auth[@]}" \
   --data-binary "$payload" \
   "${base_url}/devices/${device_id}/send")
 
 case "$http_code" in
   200) echo "Sent. Waiting for the device to appear on the destination..." >&2 ;;
+  401|403)
+    echo "set-hub: refused — this hub requires the owner's credential." >&2
+    echo "  Store it: security add-generic-password -a <worker> -s poem1-hub-admin -w <token>" >&2
+    exit 1 ;;
   503) echo "set-hub: device not connected to $base_url — is it on a different hub already?" >&2
        exit 1 ;;
   *)   echo "set-hub: HTTP $http_code from $base_url" >&2; exit 3 ;;

@@ -1,10 +1,10 @@
 # SAN — the Social Area Network
 
-**Status:** definition agreed 2026-08-05, and stages 1, 2, 3, 5 and 6 **built and
-verified the same day** — namespace, lexicon, device claiming, many devices per
+**Status:** definition agreed 2026-08-05, and **all six stages built and verified
+the same day** — namespace, lexicon, device claiming, many devices per
 hub, and the naming sweep. Stage 4 (device identity and self-description) has
 its **hub half built and proven against a simulated device**; the firmware half
-is designed, unwritten, and needs a reflash — it is the only thing left.
+is built and verified on hardware. **All six stages are done.**
 
 It exists because the working code had drifted into assumptions nobody chose:
 one hub means one device, and the record types carried a personal handle and a
@@ -146,9 +146,9 @@ an arbitrary id or use somebody's hub as an open relay, and pushing requires the
 owner. What it cannot do is tell a device from someone who read its id off the
 screen — that is stage 4, whose hub half now exists.
 
-**Still open until the reflash:** the Poem/1 holds no key, so it connects on the
-legacy path where any socket knowing the id is accepted. The protection is real
-but not yet *applied to the hardware in the room*.
+**Closed on the hardware too, 2026-08-05.** The Poem/1 holds its own key and is
+off the legacy path permanently — binding is one-way, so it cannot be downgraded
+by a socket that merely knows the id.
 
 The original text follows.
 
@@ -286,8 +286,17 @@ keeps the common case free of a setup step whose purpose nobody would guess.
 
 ### 4. Device identity and self-description — HUB HALF BUILT 2026-08-05
 
-**Built and proven against a simulated device; the firmware half is not written
-and needs the reflash.** `device-identity.ts` issues a per-connection challenge,
+**BUILT AND VERIFIED ON HARDWARE 2026-08-05.** The Poem/1 (`fccf2990`) generates
+its own P-256 key, keeps it in NVS, and proves it per connection. Its serial log
+printed fingerprint `ea3116` and the hub bound `ea3116` — the out-of-band
+confirmation the design asked for, matching first try.
+
+The decisive test, on real hardware: an impostor attached to the SAME device id
+alongside the genuine device, and a push was sent. The device received and
+compiled it; the impostor saw **zero frames**. Wrong-key connections are closed
+outright.
+
+Original note follows. `device-identity.ts` issues a per-connection challenge,
 verifies a P-256 signature, and binds a key during an owner-opened pairing
 window. `tools/fake-device.mjs` is the stand-in, and the suite's
 `device-identity` case asserts an impostor key is refused and a SILENT impostor
