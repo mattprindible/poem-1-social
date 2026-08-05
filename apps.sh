@@ -51,6 +51,9 @@ Commands:
                           Start carrying a device. Until claimed, a device gets
                           no socket and no traffic from this hub.
   release ID              Stop carrying a device.
+  pair ID                 Open a pairing window, then reconnect the device to
+                          bind its identity key. Re-pairing clears the old key —
+                          that is how a reflashed device gets back in.
   lexicon                 Does this project's schema resolve? (DNS + records)
   lexicon publish         Publish the schemas into your repo. Only meaningful
                           for the account the authority's TXT record names.
@@ -248,7 +251,8 @@ case "$cmd" in
       else "\(.count) device(s):\n" +
         ([.devices[] | "  \(.deviceId)\(if .isDefault then "  (default)" else "" end)" +
           "\(if .name then "  " + .name else "" end)" +
-          "\(if .deviceType then "  [" + .deviceType + "]" else "" end)"] | join("\n"))
+          "\(if .deviceType then "  [" + .deviceType + "]" else "" end)" +
+          "\(if .key then "  key:" + .key.fingerprint else "  (no identity key)" end)"] | join("\n"))
       end'
     ;;
 
@@ -262,6 +266,13 @@ case "$cmd" in
        + (if $d == 1 then {makeDefault: true} else {} end)')
     status=$(call POST /hub/devices "$payload" --auth)
     finish "$status" '"Claimed \(.device.deviceId)\(if .device.isDefault then " (default)" else "" end)."'
+    ;;
+
+  pair)
+    id="${args[0]:-}"
+    [[ -z "$id" ]] && { echo "apps: pair needs a device ID" >&2; exit 2; }
+    status=$(call POST "/hub/devices/$(urlenc "$id")/pair" "" --auth)
+    finish "$status" '"\(.message)\n  window: \(.windowSeconds)s, until \(.expiresAt)"'
     ;;
 
   release)

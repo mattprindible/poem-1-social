@@ -1,4 +1,5 @@
 import { NS, hubStore } from "./hub-store"
+import type { DeviceKey } from "./device-identity"
 
 // The device registry: which devices this hub will carry, and which one an
 // inbound federated push lands on.
@@ -42,6 +43,19 @@ export interface DeviceRecord {
    * reflash. See "Devices are not interchangeable" in docs/san.md.
    */
   deviceType?: string
+  /**
+   * The device's own identity key, once paired. Its presence is what flips this
+   * device from "any connection knowing the id" to "only the holder of this
+   * key" — see judgeIdentity() in device-identity.ts. Once set it is never
+   * cleared by a connection, only by the owner re-pairing.
+   */
+  key?: DeviceKey
+  /**
+   * What the device said about itself on its last verified connect. Distinct
+   * from the owner-declared `deviceType`: this is the device's own word, and
+   * only trustworthy once identity is proved.
+   */
+  reported?: Record<string, unknown>
 }
 
 export interface Device extends DeviceRecord {
@@ -155,6 +169,26 @@ export async function claimDevice(
  * Release a device. It stops being carried by this hub immediately — the gate
  * reads the registry per request, so an open socket's next reconnect is refused.
  */
+/** Read one device's stored record, or undefined when it is not claimed. */
+export async function getDevice(env: Env, deviceId: string): Promise<DeviceRecord | undefined> {
+  await migrateLegacy(env)
+  const raw = await hubStore(env).getItem(NS.device, deviceId)
+  return raw ? (JSON.parse(raw) as DeviceRecord) : undefined
+}
+
+/** Merge fields into a claimed device. No-op for a device this hub does not carry. */
+export async function updateDevice(
+  env: Env,
+  deviceId: string,
+  patch: Partial<DeviceRecord>,
+): Promise<void> {
+  const store = hubStore(env)
+  const raw = await store.getItem(NS.device, deviceId)
+  if (!raw) return
+  const record = { ...(JSON.parse(raw) as DeviceRecord), ...patch }
+  await store.setItem(NS.device, deviceId, JSON.stringify(record))
+}
+
 export async function releaseDevice(env: Env, deviceId: string): Promise<void> {
   await migrateLegacy(env)
   const store = hubStore(env)

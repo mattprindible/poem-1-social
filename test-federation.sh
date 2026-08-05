@@ -124,7 +124,7 @@ verbose=0
 
 # Every case name, so --only can reject a typo instead of matching nothing and
 # reporting a green "passed 0". Keep in step with the `wanted` calls below.
-CASES="mutual-push record-push relay-closed bad-token unknown-handle sender-warns recipient-enforces"
+CASES="mutual-push record-push relay-closed device-identity bad-token unknown-handle sender-warns recipient-enforces"
 
 usage() {
   sed -n '2,60p' "$0" >&2
@@ -154,6 +154,12 @@ Cases, in the order they run:
                        /devices/<id>/send must be refused, and an unclaimed
                        device id must get nothing even WITH the owner token.
                        Needs: token for $OWNER_WORKER.
+
+  device-identity      A paired device cannot be impersonated: the wrong key is
+                       refused, and staying SILENT (never answering the
+                       challenge) receives nothing. Uses tools/fake-device.mjs
+                       against a scratch device id — never your real hardware.
+                       Needs: token for $OWNER_WORKER, node 22+.
 
   bad-token            The sender rejects a wrong owner credential (401/403).
                        Needs: nothing.
@@ -453,7 +459,72 @@ if wanted relay-closed; then
   fi
 fi
 
-# ── 4. A wrong credential is refused ─────────────────────────────────────────
+# ── 4. A paired device cannot be impersonated ────────────────────────────────
+# The relay gate proves an UNCLAIMED id gets nothing. This proves a CLAIMED one
+# cannot be worn by someone who merely knows it — which is the whole difference
+# between "the hub carries my device" and "the hub carries whoever says they are
+# my device". Device ids are printed on the device's own screen, so knowing one
+# is not evidence of anything.
+#
+# Runs against a scratch id that is claimed, paired and released here. It never
+# touches real hardware — impersonating your actual device would mean racing the
+# thing you depend on.
+#
+# The silent case is the one worth having. An impostor need not fail the
+# challenge; it can simply never answer, staying attached and unverified. If
+# delivery were gated on "not refused" rather than on "proved", silence would be
+# the easiest bypass in the system and every other assertion here would pass.
+if wanted device-identity; then
+  tok=$(token_for "$OWNER_WORKER")
+  rig="suiterig$$"
+  if [[ -z "$tok" ]]; then
+    report SKIP device-identity "no token for $OWNER_WORKER"
+  elif ! command -v node >/dev/null 2>&1; then
+    report SKIP device-identity "node not available"
+  else
+    api() { curl -sS -m 20 -o "$BODY" -w "%{http_code}" -H "Authorization: Bearer $tok" "$@"; }
+    rm -f "/tmp/fake-device-$rig.jwk"
+    api -X POST -H "Content-Type: application/json" \
+      --data-binary "{\"deviceId\":\"$rig\"}" "${OWNER_HUB%/}/hub/devices" >/dev/null
+    api -X POST "${OWNER_HUB%/}/hub/devices/$rig/pair" >/dev/null
+
+    host="${OWNER_HUB#*://}"; host="${host%%/*}"
+    bound=$(node tools/fake-device.mjs "$host" "$rig" 2>/dev/null | tail -1)
+    impostor=$(node tools/fake-device.mjs "$host" "$rig" --wrong-key 2>/dev/null | tail -1)
+
+    # Silent impostor: attach, answer nothing, and see whether a push reaches it.
+    silent=$(node -e '
+      const [h,d,t]=process.argv.slice(1);
+      const ws=new WebSocket(`wss://${h}/devices/${d}`); let got=[];
+      ws.onmessage=e=>got.push(e.data);
+      ws.onopen=()=>setTimeout(async()=>{
+        const r=await fetch(`https://${h}/devices/${d}/send`,{method:"POST",
+          headers:{"Content-Type":"application/json","Authorization":`Bearer ${t}`},
+          body:JSON.stringify({channel:"system",type:"suite-probe"})});
+        console.log(`${r.status} ${got.filter(f=>!f.includes("identify")).length}`);
+        process.exit(0);
+      },3000);
+      setTimeout(()=>{console.log("timeout 0");process.exit(0)},15000);
+    ' "$host" "$rig" "$tok" 2>/dev/null | tail -1)
+
+    api -X DELETE "${OWNER_HUB%/}/hub/devices/$rig" >/dev/null
+    rm -f "/tmp/fake-device-$rig.jwk"
+
+    if [[ "$bound" != *"state=bound"* ]]; then
+      report FAIL device-identity "pairing did not bind a key: $bound"
+    elif [[ "$impostor" != *"does not match"* ]]; then
+      report FAIL device-identity "AN IMPOSTOR KEY WAS ACCEPTED — device identity is decorative: $impostor"
+    elif [[ "$silent" == "200 "* ]]; then
+      report FAIL device-identity "A SILENT IMPOSTOR RECEIVED A PUSH — staying quiet bypasses identity"
+    elif [[ "$silent" != "503 0" ]]; then
+      report FAIL device-identity "expected '503 0' for the silent impostor, got '$silent'"
+    else
+      report PASS device-identity "wrong key refused; silent impostor got 503 and zero frames"
+    fi
+  fi
+fi
+
+# ── 5. A wrong credential is refused ─────────────────────────────────────────
 # Cheap, but it guards a real hole: without requireOwner, anyone knowing the hub
 # URL could make it push to every one of its owner's mutuals, signed as them.
 # Hub URLs are published in atproto repos, so they are public by design.
@@ -466,7 +537,7 @@ if wanted bad-token; then
   fi
 fi
 
-# ── 5. Discovery fails cleanly ───────────────────────────────────────────────
+# ── 6. Discovery fails cleanly ───────────────────────────────────────────────
 if wanted unknown-handle; then
   tok=$(token_for "$MUTUAL_WORKER")
   if [[ -z "$tok" ]]; then
@@ -482,7 +553,7 @@ if wanted unknown-handle; then
   fi
 fi
 
-# ── 6. The sender's advisory check ───────────────────────────────────────────
+# ── 7. The sender's advisory check ───────────────────────────────────────────
 if wanted sender-warns; then
   tok=$(token_for "$OWNER_WORKER")
   has_hub=$(curl -s -m 20 "${OWNER_HUB%/}/hub/peer/$STRANGER_HANDLE" | jq -r '.found // false')
@@ -500,7 +571,7 @@ if wanted sender-warns; then
   fi
 fi
 
-# ── 7. The recipient enforces, independently ─────────────────────────────────
+# ── 8. The recipient enforces, independently ─────────────────────────────────
 # force:true skips the SENDER's advisory check on purpose. What is left is the
 # recipient's own answer, which is the only one that was ever enforcement. A
 # hostile sender would not run the courtesy check either — this simulates that

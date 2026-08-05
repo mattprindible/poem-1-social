@@ -281,7 +281,111 @@ The sender must not pick, because a sender never learns a device id and that
 should not change. A lone device is the default without anyone saying so, which
 keeps the common case free of a setup step whose purpose nobody would guess.
 
-### 4. Device type, end to end
+### 4. Device identity and self-description — HUB HALF BUILT 2026-08-05
+
+**Built and proven against a simulated device; the firmware half is not written
+and needs the reflash.** `device-identity.ts` issues a per-connection challenge,
+verifies a P-256 signature, and binds a key during an owner-opened pairing
+window. `tools/fake-device.mjs` is the stand-in, and the suite's
+`device-identity` case asserts an impostor key is refused and a SILENT impostor
+receives nothing.
+
+Migration is one-way by design: a device with **no** bound key still connects as
+before, so deploying this broke no running hub — but once a key is bound, that
+device can never fall back to unauthenticated. Re-pairing clears the old key,
+which is how a reflashed or factory-reset device gets back in.
+
+The design follows.
+
+Two changes that both need the firmware, so they ship as one reflash.
+
+**Why they belong together.** The gate can tell a claimed id from an unclaimed
+one, but it cannot tell a device from someone who read its id off the screen.
+And the hub's idea of *what* a device is currently comes from the owner typing
+`--type m5stick`. Both are the same shape of problem: the network holds beliefs
+about itself that nothing verifies. A device that can prove who it is can also be
+believed about what it is — identity is what makes self-description worth
+anything.
+
+#### Identity: a key the device generates and never sends
+
+The device generates a P-256 keypair on first boot and keeps the private half in
+NVS. It never leaves the device. P-256 because mbedtls has it on the ESP32-S3
+and the hub already speaks ES256 for federation — one curve, one set of
+mistakes to avoid.
+
+Not a shared secret issued by the hub. A secret has to be *delivered*, which
+means either a per-device build (the thing runtime hub config exists to avoid)
+or a provisioning channel that is itself unauthenticated. A device-generated key
+needs no delivery at all: one firmware image for everybody, and the private half
+never crosses a wire.
+
+Handshake, using machinery that already exists — `onMessageWithChannel("system")`
+for inbound and `sendSystem` for outbound:
+
+```
+device connects  ──▶  hub: challenge (random nonce, per connection)
+device signs the nonce with its key
+              ◀──     hub verifies against the key bound to this device id
+```
+
+A per-connection nonce is what makes it a proof rather than a password. A
+replayed `hello` is worthless because the nonce it signed will never be issued
+again. Until a connection is verified it is quarantined: it receives no pushes
+and its frames are not recorded as the device's word.
+
+#### Pairing: how the hub learns the key
+
+**Trust on first use, inside a window the owner opens.** The hub has no key for
+a new device, so someone has to say "this one is mine". The owner opens a
+pairing window; the first device presenting a key for that id during the window
+gets bound; every later connection must match. The device also draws its key
+fingerprint on its own screen, so the owner can confirm out of band that the key
+the hub bound is the key the device holds.
+
+Why not permanent TOFU with no window: a device that reconnects constantly gives
+an attacker many chances to be first, and "first" is not a property anyone can
+observe after the fact. A window makes the risky moment short and deliberate.
+
+#### Self-description: the device's own word
+
+`hello` gains what the device knows about itself — `deviceType`, firmware and
+Resident versions, screen geometry, and the drivers `main.cpp` actually wired
+up. The hub records it against the claimed device, replacing the owner-declared
+`deviceType` with the device's own account of itself.
+
+This is the fix for a real failure mode already noted above: Lua written for a
+Poem/1 panel compiles cleanly on an M5Stick and renders garbage, and the error
+channel reports success. A push can only be checked for compatibility if
+something knows what the target actually is.
+
+### 5. Discovery: probe, do not remember
+
+The half that makes the rest matter. **A hub should never hold a cached belief
+about what a mutual has; it should ask.** Beliefs go stale silently — someone
+retires a board, adds one, changes what they run — and a stale belief is worse
+than no belief because it is acted on with confidence.
+
+So: `GET /federation/capabilities`, answered live, signature-authenticated the
+same way `/federation/inbox` is, and available to **mutuals only**.
+
+**It returns device PROFILES, never device ids or counts.** A device id is a
+credential on the relay, and nothing about discovery justifies moving one
+between hubs — the property that federation has protected from the start. What a
+sender legitimately needs is "will an app shaped like this work on anything you
+have", and that is answerable without naming a single device:
+
+```json
+{ "profiles": [ { "deviceType": "poem1", "screen": {"w": 960, "h": 540, "colors": 2} } ] }
+```
+
+Mutuals only, because what hardware someone owns is theirs to disclose. A mutual
+can already push code to your device; learning what shape to push is strictly
+less than that, and refusing it would only mean they push blind.
+
+Cached, if at all, with a short TTL and always revalidated — the point is to ask.
+
+### 6. Device type, end to end (superseded by stage 4 above)
 
 Firmware `hello` carries `deviceType`; the hub records it per claimed device; the
 app record gains a target field; pushes to a mismatched device warn or refuse.

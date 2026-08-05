@@ -1,5 +1,8 @@
 import { DeviceAgent as RelayAgent } from "@inanimate/resident/cloudflare"
-import type { Connection, WSMessage } from "agents"
+import type { Connection, ConnectionContext, WSMessage } from "agents"
+
+import { getDevice, updateDevice } from "./devices"
+import { closePairWindow, fingerprintOf, judgeIdentity, newChallenge } from "./device-identity"
 
 // The relay Durable Object, extended so the device can talk BACK.
 //
@@ -30,6 +33,13 @@ import type { Connection, WSMessage } from "agents"
 // identity, so renaming it would need a `renamed_classes` migration against a
 // live object that is currently holding this hub's device socket. Subclassing
 // under the same exported name keeps that entirely off the table.
+
+/** Per-connection state, persisted in the socket attachment across hibernation. */
+interface ConnState {
+  challenge?: string
+  verified?: boolean
+  fingerprint?: string
+}
 
 /** Ring size. Bounded because a chatty app could otherwise fill the DO. */
 const MAX_EVENTS = 200
@@ -98,13 +108,164 @@ export class DeviceAgent extends RelayAgent<Env> {
     return false
   }
 
+  /**
+   * Challenge every device connection the moment it opens.
+   *
+   * Per CONNECTION, not per device: a nonce reused across connections is a
+   * password, and the whole point of a challenge is that a replayed proof is
+   * worthless. Held in memory rather than storage because it is meaningless
+   * once this socket closes.
+   */
+  onConnect(connection: Connection, ctx: ConnectionContext): void {
+    super.onConnect(connection, ctx)
+    const url = new URL(ctx.request.url)
+    if (url.searchParams.get("monitor") === "1") return
+
+    const challenge = newChallenge()
+    // Connection state, NOT an in-memory map: Durable Objects hibernate with
+    // their WebSockets still open, and a map would come back empty while the
+    // sockets came back live — turning the real device unverified and cutting
+    // it off. setState persists in the socket's own attachment.
+    connection.setState({ challenge, verified: false })
+    connection.send(JSON.stringify({ channel: "system", type: "identify", challenge }))
+  }
+
+
   async onMessage(connection: Connection, data: WSMessage): Promise<void> {
     if (typeof data === "string" && this.isDevice(connection)) {
+      // The auth frame is consumed here and never recorded: it is handshake,
+      // not something the device said, and logging signatures would put a
+      // replayable-looking artefact in a ring buffer the owner reads.
+      if (await this.handleAuth(connection, data)) return
+
+      // A device with a key on file speaks only through a proved connection.
+      // Otherwise anyone holding the id could write the owner's event log —
+      // the log being the thing the owner reads to decide the device is fine.
+      if (!(await this.speaksForDevice(connection))) return
       this.record(data)
     }
     // Then the canonical behaviour, unchanged. Ours is additive: if upstream
     // ever gives onMessage a body, we inherit it rather than shadow it.
     await super.onMessage(connection, data)
+  }
+
+
+  /**
+   * Returns true when the frame WAS the auth response, so the caller stops.
+   *
+   * A device with a bound key that fails this is disconnected rather than
+   * merely ignored: leaving it attached would let it keep occupying the
+   * device slot and emitting frames that look like presence.
+   */
+  /**
+   * May this connection act as the device?
+   *
+   * True for a proved connection, and true for any connection when no key is
+   * bound (the legacy path — a hub whose device has never paired still works).
+   * The asymmetry is the point: binding a key is one-way, so a paired device
+   * can never be impersonated by simply staying quiet.
+   */
+  private async speaksForDevice(connection: Connection): Promise<boolean> {
+    const stored = await getDevice(this.env, this.name)
+    if (!stored?.key) return true
+    return (connection.state as ConnState | null)?.verified === true
+  }
+
+  /**
+   * Deliver only to connections entitled to be the device.
+   *
+   * THE ENFORCEMENT POINT. Refusing to *verify* is not enough on its own: an
+   * impostor can simply never answer the challenge, and a connection that is
+   * merely unverified still sits in upstream's "device" tag and would receive
+   * every pushed app. Gating delivery is what makes silence useless.
+   */
+  async handleSend(request: Request): Promise<Response> {
+    const stored = await getDevice(this.env, this.name)
+    if (!stored?.key) return super.handleSend(request)
+
+    const entitled = Array.from(this.getConnections("device")).filter(
+      (c) => (c.state as ConnState | null)?.verified === true,
+    )
+    if (entitled.length === 0) {
+      return new Response("Device not connected", { status: 503 })
+    }
+
+    const raw = await request.text()
+    for (const c of entitled) c.send(raw)
+    for (const c of this.getConnections("monitor")) c.send(raw)
+    return new Response("OK", { status: 200 })
+  }
+
+  private async handleAuth(connection: Connection, raw: string): Promise<boolean> {
+    let msg: { channel?: unknown; type?: unknown; pubkey?: unknown; sig?: unknown; device?: unknown }
+    try {
+      msg = JSON.parse(raw)
+    } catch {
+      return false
+    }
+    if (msg.channel !== "system" || msg.type !== "identify") return false
+
+    const challenge = (connection.state as ConnState | null)?.challenge
+    if (!challenge) {
+      connection.close(1008, "no challenge outstanding")
+      return true
+    }
+
+    const stored = await getDevice(this.env, this.name)
+    const verdict = await judgeIdentity(
+      this.env,
+      this.name,
+      stored?.key,
+      {
+        pubkey: typeof msg.pubkey === "string" ? msg.pubkey : undefined,
+        sig: typeof msg.sig === "string" ? msg.sig : undefined,
+      },
+      challenge,
+    )
+
+    if (verdict.state === "refused") {
+      connection.close(1008, verdict.reason)
+      return true
+    }
+
+    if (verdict.state === "bound") {
+      const pubkey = msg.pubkey as string
+      await updateDevice(this.env, this.name, {
+        key: {
+          pubkey,
+          boundAt: new Date().toISOString(),
+          fingerprint: await fingerprintOf(pubkey),
+        },
+      })
+      // One window, one device. Leaving it open would let a second device bind
+      // over the first on the same authorization the owner gave once.
+      await closePairWindow(this.env)
+    }
+
+    connection.setState({
+      challenge: undefined,
+      verified: verdict.state !== "legacy",
+      ...(verdict.state === "legacy" ? {} : { fingerprint: verdict.fingerprint }),
+    })
+
+    // Whatever the device says about itself rides on the auth frame, so it is
+    // only ever recorded once identity has been proved. An unverified device's
+    // self-description is just a claim by whoever opened the socket.
+    if (verdict.state !== "legacy" && msg.device && typeof msg.device === "object") {
+      await updateDevice(this.env, this.name, {
+        reported: msg.device as Record<string, unknown>,
+      })
+    }
+
+    connection.send(
+      JSON.stringify({
+        channel: "system",
+        type: "identified",
+        state: verdict.state,
+        ...(verdict.state === "legacy" ? {} : { fingerprint: verdict.fingerprint }),
+      }),
+    )
+    return true
   }
 
   private record(raw: string): void {

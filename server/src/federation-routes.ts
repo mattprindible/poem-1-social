@@ -12,9 +12,12 @@ import { IdentityError, resolveIdentity } from "./identity"
 import { describeError, getOwner } from "./oauth-routes"
 import { AuthError, requireOwner } from "./auth"
 import { AppError } from "./app-record"
+import { PAIR_WINDOW_MS, openPairWindow, readPairWindow } from "./device-identity"
 import {
   DeviceError,
   claimDevice,
+  getDevice,
+  updateDevice,
   defaultDevice,
   listDevices,
   releaseDevice,
@@ -167,8 +170,12 @@ export async function routeFederationRequest(
       await requireOwner(env, request)
 
       if (request.method === "GET") {
-        const devices = await listDevices(env)
-        return json({ count: devices.length, devices })
+        const [devices, win] = await Promise.all([listDevices(env), readPairWindow(env)])
+        return json({
+          count: devices.length,
+          ...(win ? { pairing: { deviceId: win.deviceId, expiresAt: new Date(win.expiresAt).toISOString() } } : {}),
+          devices,
+        })
       }
 
       // Claiming is the act that makes a hub carry a device at all — before
@@ -191,6 +198,36 @@ export async function routeFederationRequest(
         })
         return json({ ok: true, device })
       }
+    }
+
+    // ── Open a pairing window ────────────────────────────────────────────
+    // The hub has no key for a new device, so the owner has to vouch once. The
+    // first device presenting a key for this id during the window is bound;
+    // afterwards only that key may act as the device.
+    if (path.endsWith("/pair") && path.startsWith("/hub/devices/") && request.method === "POST") {
+      await requireOwner(env, request)
+      const deviceId = decodeURIComponent(
+        path.slice("/hub/devices/".length, path.length - "/pair".length),
+      )
+      const device = await getDevice(env, deviceId)
+      if (!device) throw new DeviceError(`'${deviceId}' is not claimed by this hub`, 404)
+
+      // Re-pairing drops the old key deliberately: a device that was reflashed
+      // or factory-reset holds a NEW key, and refusing to rebind would leave
+      // the owner locked out of their own hardware with no way back.
+      if (device.key) await updateDevice(env, deviceId, { key: undefined })
+
+      const win = await openPairWindow(env, deviceId)
+      return json({
+        ok: true,
+        deviceId,
+        expiresAt: new Date(win.expiresAt).toISOString(),
+        windowSeconds: PAIR_WINDOW_MS / 1000,
+        rebound: Boolean(device.key),
+        message: device.key
+          ? "previous key cleared; reconnect the device now to bind its new one"
+          : "reconnect the device now to bind its key",
+      })
     }
 
     if (path.startsWith("/hub/devices/") && request.method === "DELETE") {
