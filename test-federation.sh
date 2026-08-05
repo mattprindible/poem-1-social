@@ -61,9 +61,10 @@
 #   printf '%s' "$TOKEN" | (cd server && npx wrangler secret put HUB_ADMIN_TOKEN --name "$W")
 #
 # This script looks each hub's token up by worker name, so adding a hub is
-# adding a keychain entry. You do NOT need an OAuth browser session to run any
-# of this — OAuth is only for CLAIMING a hub and publishing its record, which is
-# a one-time act per identity.
+# adding a keychain entry. A token is enough for every case EXCEPT `record-push`,
+# which publishes an app into the sender's repo and so needs that hub to still
+# hold a live OAuth session. Sessions lapse; that case skips when it has, rather
+# than reporting a federation failure for a login problem.
 #
 # Requires: curl, jq.
 
@@ -108,7 +109,7 @@ verbose=0
 
 # Every case name, so --only can reject a typo instead of matching nothing and
 # reporting a green "passed 0". Keep in step with the `wanted` calls below.
-CASES="mutual-push bad-token unknown-handle sender-warns recipient-enforces"
+CASES="mutual-push record-push bad-token unknown-handle sender-warns recipient-enforces"
 
 usage() {
   sed -n '2,60p' "$0" >&2
@@ -125,6 +126,14 @@ Cases, in the order they run:
                        Needs: keychain token for $MUTUAL_WORKER, device online.
                        Also a token for $OWNER_WORKER to check the compile —
                        without it the case passes on delivery alone and says so.
+
+  record-push          POSITIVE. Same path as mutual-push, but the app is
+                       PUBLISHED to the sender's repo first and pushed by
+                       reference — proving a record round-trips to hardware and
+                       that the wire format did not change to allow it.
+                       Needs: token for $MUTUAL_WORKER AND a live OAuth session
+                       on that hub (publishing writes their repo). Skips, not
+                       fails, when the session has lapsed.
 
   bad-token            The sender rejects a wrong owner credential (401/403).
                        Needs: nothing.
@@ -191,6 +200,30 @@ push() {  # hub token to force
   local hub="$1" token="$2" to="$3" force="$4" payload
   payload=$(jq -n --arg to "$to" --arg code "$(cat "$APP_FILE")" --argjson f "$force" \
     '{to: $to, code: $code} + (if $f == 1 then {force: true} else {} end)')
+  curl -sS -o "$BODY" -w "%{http_code}" -X POST \
+    -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+    --data-binary "$payload" --max-time 60 "${hub%/}/federation/push"
+}
+
+# Publish an app into a hub owner's own repo. Returns the HTTP status; body in
+# $BODY. Needs a LIVE OAuth session on that hub, not just an owner token — this
+# writes the owner's atproto repo, which the hub can only do on their behalf.
+publish_app() {  # hub token name file
+  local hub="$1" token="$2" name="$3" file="$4" payload
+  payload=$(jq -n --arg name "$name" --arg code "$(cat "$file")" \
+    --arg desc "published by test-federation.sh" \
+    '{name: $name, code: $code, description: $desc}')
+  curl -sS -o "$BODY" -w "%{http_code}" -X POST \
+    -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+    --data-binary "$payload" --max-time 60 "${hub%/}/apps"
+}
+
+# Push by REFERENCE rather than by value: the sender resolves the record to Lua
+# before anything leaves its hub, so the recipient sees the identical {type,
+# code} it has always seen.
+push_ref() {  # hub token to ref
+  local hub="$1" token="$2" to="$3" ref="$4" payload
+  payload=$(jq -n --arg to "$to" --arg app "$ref" '{to: $to, app: $app}')
   curl -sS -o "$BODY" -w "%{http_code}" -X POST \
     -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
     --data-binary "$payload" --max-time 60 "${hub%/}/federation/push"
@@ -295,7 +328,66 @@ if wanted mutual-push; then
   fi
 fi
 
-# ── 2. A wrong credential is refused ─────────────────────────────────────────
+# ── 2. The same push, but the app is a RECORD ────────────────────────────────
+# mutual-push proves Lua reaches hardware. This proves the app can be a durable,
+# named, authored thing on the way there — published to the sender's repo, then
+# pushed by reference and compiled on someone else's device.
+#
+# The load-bearing assertion is the quiet one: the recipient is unchanged. The
+# sender resolves the record to source BEFORE signing, so the wire stays frozen
+# at {type, code} and a peer running older hub code cannot tell the difference.
+# If this case ever needs the recipient updated to pass, app records will have
+# leaked into the federation protocol — which is exactly what the resolve-first
+# design exists to prevent.
+if wanted record-push; then
+  tok=$(token_for "$MUTUAL_WORKER")
+  if [[ -z "$tok" ]]; then
+    report SKIP record-push "no token for $MUTUAL_WORKER (see header)"
+  else
+    code=$(publish_app "$MUTUAL_HUB" "$tok" "fed-probe" "$APP_FILE")
+    if [[ "$code" != "200" ]]; then
+      # An expired OAuth session is a setup problem on that hub, not a broken
+      # push path — the owner has to re-login in a browser. Skipping keeps it
+      # from reading as a federation regression.
+      # Not necessarily JSON: a hub still on code without /apps answers with a
+      # plain-text 404, and a jq error there would obscure the actual reason.
+      why=$(jq -r '.message // .error // empty' < "$BODY" 2>/dev/null || true)
+      [[ -z "$why" ]] && why="HTTP $code — $MUTUAL_WORKER may predate app records; deploy it"
+      report SKIP record-push "could not publish to $MUTUAL_WORKER's repo: $why"
+    else
+      ref=$(jq -r '.rkey' < "$BODY")
+      cid=$(jq -r '.cid' < "$BODY")
+
+      owner_tok=$(token_for "$OWNER_WORKER")
+      seq_before=$(latest_seq "$OWNER_HUB" "$owner_tok")
+
+      code=$(push_ref "$MUTUAL_HUB" "$tok" "$OWNER_HANDLE" "$ref")
+      delivered=$(jq -r '.response.delivered // false' < "$BODY")
+      sent_cid=$(jq -r '.app.cid // ""' < "$BODY")
+
+      if [[ "$code" != "200" || "$delivered" != "true" ]]; then
+        report FAIL record-push "push by reference failed: HTTP $code, error=$(err_of)"
+      elif [[ "$sent_cid" != "$cid" ]]; then
+        # The response must name the version that actually went. Without this,
+        # "pin an app by CID" (docs/social-plan.md, open decision 1) has no
+        # trustworthy input, because the sender's report of WHAT it sent would
+        # be unverified.
+        report FAIL record-push "pushed cid '$sent_cid' is not the published '$cid'"
+      elif [[ -z "$seq_before" ]]; then
+        report PASS record-push "record $ref delivered (compile UNVERIFIED — no token for $OWNER_WORKER)"
+      else
+        verdict=$(compile_verdict "$OWNER_HUB" "$owner_tok" "$seq_before")
+        case "$verdict" in
+          compiled) report PASS record-push "published record $ref pushed by reference and compiled ON the device" ;;
+          error:*)  report FAIL record-push "delivered but FAILED to compile: ${verdict#error:}" ;;
+          *)        report FAIL record-push "delivered but device never reported compiling it" ;;
+        esac
+      fi
+    fi
+  fi
+fi
+
+# ── 3. A wrong credential is refused ─────────────────────────────────────────
 # Cheap, but it guards a real hole: without requireOwner, anyone knowing the hub
 # URL could make it push to every one of its owner's mutuals, signed as them.
 # Hub URLs are published in atproto repos, so they are public by design.
@@ -308,7 +400,7 @@ if wanted bad-token; then
   fi
 fi
 
-# ── 3. Discovery fails cleanly ───────────────────────────────────────────────
+# ── 4. Discovery fails cleanly ───────────────────────────────────────────────
 if wanted unknown-handle; then
   tok=$(token_for "$MUTUAL_WORKER")
   if [[ -z "$tok" ]]; then
@@ -324,7 +416,7 @@ if wanted unknown-handle; then
   fi
 fi
 
-# ── 4. The sender's advisory check ───────────────────────────────────────────
+# ── 5. The sender's advisory check ───────────────────────────────────────────
 if wanted sender-warns; then
   tok=$(token_for "$OWNER_WORKER")
   has_hub=$(curl -s -m 20 "${OWNER_HUB%/}/hub/peer/$STRANGER_HANDLE" | jq -r '.found // false')
@@ -342,7 +434,7 @@ if wanted sender-warns; then
   fi
 fi
 
-# ── 5. The recipient enforces, independently ─────────────────────────────────
+# ── 6. The recipient enforces, independently ─────────────────────────────────
 # force:true skips the SENDER's advisory check on purpose. What is left is the
 # recipient's own answer, which is the only one that was ever enforcement. A
 # hostile sender would not run the courtesy check either — this simulates that
