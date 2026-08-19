@@ -426,13 +426,23 @@ export class DeviceAgent extends RelayAgent<Env> {
         channel?: unknown
         type?: unknown
         name?: unknown
+        data?: { name?: unknown }
       }
       if (typeof parsed.channel === "string") channel = parsed.channel
       if (typeof parsed.type === "string") type = parsed.type
       // Runtime telemetry is all one `type`, so without this every compile
       // error and every successful load would look alike in the column that
       // exists to tell them apart.
+      //
+      // Two places to look, because Resident moved it. Through 0.7.0 the only
+      // telemetry we saw was the firmware's own flat frame, `name` at the top
+      // level. 0.8.0-dev emits a wire copy of every telemetry event itself,
+      // with `name` nested under `data` — so reading only the top level would
+      // hand this column a NULL for exactly the frames it exists to separate.
+      // Top level still wins when both are present: a sender that puts a name
+      // where the old shape put one means it there.
       if (typeof parsed.name === "string") name = parsed.name
+      else if (parsed.data && typeof parsed.data.name === "string") name = parsed.data.name
     } catch {
       // Not JSON. Store it anyway — a malformed frame is exactly the kind of
       // thing you want to SEE when a device is misbehaving, and discarding it

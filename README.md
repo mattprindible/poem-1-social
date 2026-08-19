@@ -30,6 +30,7 @@ The Poem/1's three quirks are expressed in Resident's own terms
 | Button (GPIO2)             | `systemButton`  | `ButtonDriver`      |
 
 > [!NOTE]
+> This board tracks **Resident 0.8.0-dev** (see [`sync.sh`](sync.sh)).
 > `systemDisplay` / `systemLED` were `statusDisplay` / `statusLED` before
 > Resident 0.7.0. The old names still compile as deprecated aliases, so an older
 > example you copy from will work — but they are the ones going away.
@@ -180,27 +181,40 @@ rather than inferred from a connection count. When it can't (no owner token for
 the destination, or a destination not running this hub's code — the public relay,
 say) it falls back to counting and says so.
 
+Since 0.8.0-dev there are **two** frames called `hello` on the system channel:
+Resident's own (`protocol`, `deviceType`, `bootId`, `limits`) and this board's
+(`host`, `stored`, `fellback`). Ours arrives first — `onConnected` fires at
+connect, while Resident's drains on the next `loop()`. Anything matching on
+`type == "hello"` must therefore key off a field it actually needs rather than
+the type alone; `set-hub.sh` selects on `.host` for exactly this reason.
+
 The app-event side needed no reflash — `events.send` was in the firmware all
 along and only the hub had to listen. See
 [`server/src/device-agent.ts`](server/src/device-agent.ts).
 
-**Errors come back on the same path.** The firmware forwards the runtime's own
-telemetry, so a pushed app that fails no longer fails silently:
+**Errors come back on the same path.** The runtime reports its own failures, so
+a pushed app that fails no longer fails silently:
 
 ```sh
 ./send-app.sh device-apps/wont-compile.lua   # a fixture that is meant to fail
 ```
 
 ```json
-{ "type": "telemetry", "generationId": "d181", "name": "compile_error",
-  "data": { "error": "[string \"…\"]:25: unfinished string near …" } }
+{ "channel": "system", "type": "telemetry",
+  "data": { "name": "compile_error", "generationId": "caf80",
+            "error": "[string \"…\"]:25: unfinished string near …" } }
 ```
 
 Names are `app_received`, `app_compiled`, `compile_error`, `runtime_error`,
-`log_error`, `app_restored`, and are lifted into the `name` field so errors are
-greppable. This half *does* require the firmware — telemetry comes from the
-runtime, not from Lua — so a device on older firmware still reports app events
-and simply stays quiet about errors.
+`log_error`, `app_restored`, and the hub lifts `name` into its own column so
+errors are greppable.
+
+This used to be the one half that needed a reflash: telemetry comes from the
+runtime rather than from Lua, so nothing in an app could forward it, and this
+board did it in `main.cpp`. **Resident 0.8.0-dev sends it upstream itself**, so
+that forwarder was deleted — keeping it would have written every failure twice.
+`name` moved into `data` in the same change; `device-agent.ts` reads both, top
+level first, so a device on either firmware records correctly.
 
 ## The social layer
 

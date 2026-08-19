@@ -68,10 +68,18 @@ Presses arrive as events (preferred over polling):
 ```lua
 function on_event(ctx, event)
   if event.name == 'button' then
-    -- event.count = cumulative press count
+    -- event.data.count = cumulative press count
   end
 end
 ```
+
+> [!NOTE]
+> **`event.data.count` is the current shape; `event.count` is a deprecated
+> mirror.** Since Resident 0.8.0-dev every event — driver and wire alike —
+> carries its payload in `event.data`, which is why the two used to disagree.
+> The flattened top-level copy is still written for one deprecation window, so
+> old apps keep working, and the apps in `device-apps/` here still read it.
+> Write `event.data.count` in anything new.
 
 > [!IMPORTANT]
 > **A hold of ~3 seconds is reserved by the firmware.** Holding the button that
@@ -118,9 +126,18 @@ Publishes `{channel="app", type=<name>, data=…, from=<device id>, nonce, ts_ms
 over the same WebSocket the relay already uses — so you do **not** set `from`,
 and there is no `ctx.device_id` to read (see the `ctx` field list below).
 
-Returns `false` rather than raising when it is rate-limited, when the name is
-empty, or when the send fails — **check the return value** if you need to know
-it went out. The limiter is a token bucket shared by every emitter on the
+Returns a **string** verdict rather than raising: `'sent'` (went out now),
+`'queued'` (held for delivery — offline or rate-limited, drains in order), or
+`'dropped'` (gone: empty name, or the queue overflowed).
+
+> [!WARNING]
+> **Compare the word, never the truthiness.** All three verdicts are non-empty
+> strings, and every non-empty string is truthy in Lua, so `if events.send(…)`
+> is now always true and `ok and 'ok' or 'FAILED'` can never report a failure.
+> This returned a boolean before 0.8.0-dev, so that idiom used to work and now
+> silently claims success. Write `if events.send(…) == 'dropped' then …`.
+
+The limiter is a token bucket shared by every emitter on the
 device: 5 events/s sustained, burst of 10. Keep heartbeats to once every few
 seconds, never per-tick.
 
@@ -132,18 +149,58 @@ curl -H "Authorization: Bearer $HUB_ADMIN_TOKEN" https://<your-hub>/hub/device/e
 
 See `device-apps/phone-home.lua` for a working example.
 
-**Errors report themselves** — you do not need to catch anything. The firmware
-forwards the runtime's telemetry to the same endpoint, so a compile or runtime
-failure shows up there with the Lua message and line number, rather than only on
-the serial console:
+**Errors report themselves** — you do not need to catch anything. The runtime
+emits its own telemetry over the same WebSocket, so a compile or runtime failure
+shows up at the hub with the Lua message and line number, rather than only on the
+serial console:
 
 ```json
-{ "name": "compile_error", "data": { "error": "[string \"…\"]:25: unfinished string near …" } }
+{ "channel": "system", "type": "telemetry",
+  "data": { "name": "compile_error", "generationId": "caf80",
+            "error": "[string \"…\"]:25: unfinished string near …" } }
 ```
+
+Note `name` lives **inside `data`** as of 0.8.0-dev (it was top-level before,
+when this board forwarded telemetry itself; Resident now does it, and the
+firmware's forwarder was removed as a duplicate). A hub reading only the top
+level records these as nameless.
 
 Also emitted: `app_received`, `app_compiled`, `runtime_error`, `log_error`
 (from `log.error(msg)`), `app_restored`. `on_tick` errors are rate-limited at
 the source; `init` and `on_event` errors go out immediately.
+
+### State that survives a reload (`store`)
+
+```lua
+store.set('streak', 4)      -- scalars only: strings, numbers, booleans
+store.get('streak')         -- 4  (nil if unset)
+store.keys()                -- { 'streak' }
+store.remaining()           -- bytes of budget left (~2009 free on a fresh slot)
+store.clear()
+```
+
+Persisted to NVS and keyed to the slot the load message named, so it survives
+both `loadApp` and a reboot — this is how an app keeps a counter or a cursor
+across a push. A push that names a *different* slot clears it, which is the
+mechanism that stops one app inheriting another's state.
+
+Writing past the budget does not fail silently: the runtime emits `store_full`
+telemetry naming the key, once per key per load.
+
+### Asking what you can draw on (`surfaces`)
+
+```lua
+surfaces.list()             -- {} on the Poem/1 — see below
+surfaces.get('main')        -- nil
+```
+
+> [!IMPORTANT]
+> **On this board `surfaces.list()` returns an empty list, and that is correct
+> rather than broken** (measured: 0). The registry describes render targets used
+> by Resident's own `lgfx`/`lvgl` graphics modules. The Poem/1's 960×540 e-ink
+> panel is driven by this project's own `EpdScreenDriver` and exposed as
+> `screen.*`, so it registers no target. Use `screen.*` and the fixed 960×540
+> geometry; do not feature-detect the panel through `surfaces`.
 
 ## App lifecycle
 
@@ -220,7 +277,7 @@ end
 
 function on_event(ctx, event)
   if event.name == 'button' then
-    local n = event.count
+    local n = event.data.count
     screen.fill_rect(40, 200, 880, 120, 255)
     screen.text(40, 210, 'Presses: ' .. n, 5)
     screen.fill_rect(40, 300, math.min(n * 20, 880), 20, 100)
@@ -237,6 +294,15 @@ end
 - Effective update rate ≤ ~2 fps (fast flips). Design for calm, poster-like
   screens.
 - No network access from Lua.
+- **No `os`, `io`, `require`, `load`, `loadstring`, `dofile`, `package`, or
+  `debug`** — the sandbox closed in 0.8.0-dev (verified on this device: `os` and
+  `require` are both `nil`). There is no clock via `os.time()`; read `ctx` or the
+  `time.*` module instead.
+- A single dispatch is capped at ~2,000,000 VM instructions. Overrun aborts that
+  call with a `runtime_error` and **leaves the app running**, so an accidental
+  infinite loop in `on_tick` no longer takes the device out.
+- `ctx.generation_id` is `nil` here: it carries an id only when the *pushing*
+  side stamps one, and `send-app.sh` does not.
 
 ## Practical Tips
 

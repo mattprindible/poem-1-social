@@ -241,8 +241,16 @@ Three kinds of thing arrive here, and `type` / `name` tell them apart:
 | | |
 |---|---|
 | `channel:"app"` | the Lua app's own `events.send(name, data)` |
-| `channel:"system"`, `type:"hello"` | sent on every connect, naming the hub the device believes it reached |
-| `type:"telemetry"` | the runtime's own reports; `name` is `app_compiled`, `compile_error`, `runtime_error`, `log_error`, … |
+| `channel:"system"`, `type:"hello"` | **two different frames** — the board's, naming the hub it believes it reached, and Resident's own (`protocol`, `deviceType`, `bootId`, `limits`). The board's arrives first. Match on the field you need, never on `type` alone |
+| `channel:"system"`, `type:"telemetry"` | the runtime's own reports; `name` is `app_compiled`, `compile_error`, `runtime_error`, `log_error`, … |
+
+`record()` lifts `channel`, `type` and `name` into columns and keeps the raw
+frame verbatim. **`name` is read from two places**: top level (Resident ≤ 0.7.0,
+where this board forwarded telemetry itself) and `data.name` (0.8.0-dev, where
+the runtime sends its own). Top level wins when both are present. Deploy this
+hub *before* flashing a device to newer firmware — a hub reading only the top
+level records the new frames as nameless, which is the one column that tells a
+compile error from a clean load.
 
 Owner-gated, **not** device-ID-gated. A device ID is the credential for *pushing*
 to a device and this hub already knows its own — but what a device *emits* is the

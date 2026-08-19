@@ -391,9 +391,28 @@ device emits twin ──┬──▶ hub: discovery, per-device knowledge
 hardware it stands in for — and drift is exactly where the two bugs of
 2026-08-05 hid.
 
-No Resident version is reported: the library exposes neither a macro nor an
-accessor, and a hardcoded copy would go on claiming 0.7.0 after the next
-`./sync.sh`. Better to omit a fact than publish a stale one.
+No Resident version is reported: the library exposes no version accessor, and a
+hardcoded copy would go on claiming 0.7.0 after the next `./sync.sh`. Better to
+omit a fact than publish a stale one.
+
+**As of 0.8.0-dev there is something better to report.** Resident defines
+`RESIDENT_PROTOCOL_VERSION` (currently `1`) and the device announces it in its
+connect hello, alongside `deviceType`, `bootId` and `limits`. That is the more
+useful fact anyway: a library version says what a device was *built from*, while
+the protocol version says what it can still *talk to* — which is the question a
+twin, or a federated hub receiving a push, actually needs answered. Nothing reads
+it yet; it is the obvious hook for the version-skew problem this document leaves
+open, and it did not exist a week ago.
+
+That problem is no longer hypothetical here. As of 2026-08-18 the three test
+hubs deliberately run **different deploys**: `mfd-hub` carries the `data.name`
+fix, while `idiot-hub` and `rusty-hub` are still on 2026-08-05. Left that way on
+purpose rather than fixed, because deciding how updates propagate across a
+federated network is the open question, and a network where every hub is
+updated by one person from one machine cannot demonstrate the problem it needs
+to solve. It is safe today only because those two hubs hold no device — point
+the Poem/1 at either with `./set-hub.sh` (a runtime switch, no reflash) and its
+telemetry starts recording nameless.
 
 This also fixes a real failure mode noted above: Lua written for a Poem/1 panel
 compiles cleanly on an M5Stick and renders garbage, with the error channel

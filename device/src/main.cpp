@@ -357,38 +357,42 @@ void setup() {
     sandbox.onMessage(handleControl);                       // legacy, un-channelled
 
     // ── Error reporting ──────────────────────────────────────────────────
-    // Forward the sandbox's telemetry to the hub, which records it and serves
-    // it at /hub/device/events. This is the half that needed a reflash: the
+    // This board used to forward the sandbox's telemetry to the hub itself,
+    // and the reason is worth keeping even though the code is gone. The
     // data-plane return path (events.send) has always been in stock Resident
     // and only needed the hub to listen, but telemetry is emitted by the
-    // RUNTIME rather than by Lua, so nothing in an app could ever forward it.
+    // RUNTIME rather than by Lua, so nothing in an app could ever forward it —
+    // it was the one half that genuinely needed a reflash.
     //
-    // What it buys: a pushed app that fails to COMPILE used to fail silently.
+    // What it bought: a pushed app that fails to COMPILE used to fail silently.
     // The hub's push returned 200 (it delivered fine — the relay's job ended
     // there), the panel kept showing whatever was on it, and the only way to
     // learn why was a USB cable. That is a bad enough loop when the app is
     // yours; it is untenable once apps arrive from other people, because the
     // sender has no cable and the recipient has no reason to hold one.
     //
-    // Verbatim rather than re-wrapped: the envelope is upstream's
-    // ({type:"telemetry", generationId, name, data}), and translating it here
-    // would invent a dialect this project would then have to keep in step with
-    // Resident. The hub lifts `name` into its own column and keeps the raw
-    // frame, so new telemetry names show up without a firmware change.
+    // …and as of Resident 0.8.0-dev, that is upstream's job. Every telemetry
+    // emission now queues its own wire copy — {channel:"system",
+    // type:"telemetry", data:{name, generationId, error, count}} — drained
+    // from loop() when the transport can take it (Sandbox::queueTelemetryWire
+    // / drainOutboundSystem). So there is nothing left for this board to
+    // forward, and the setTelemetryCallback that used to live here is gone:
+    // keeping it would have sent every compile error to the hub TWICE, once
+    // channelled by the runtime and once flat by us, writing two rows in
+    // device_events for one failure.
     //
-    // Not routed through publishEvent deliberately: that shares a 5/s token
-    // bucket with the app's own events.send, so an app erroring in a loop would
-    // spend the budget it needs to report anything else. Errors must not be the
-    // thing that silences the error channel. Upstream already rate-limits
-    // on_tick errors at the source, which is the right place for it.
+    // Two things the upstream version does better, both of which were noted as
+    // accepted losses when this was ours. It QUEUES rather than dropping, so a
+    // report raised before WiFi is up (app_restored during setup()) survives
+    // instead of vanishing into a sendText that returned false. And it rides
+    // the control plane rather than sharing the 5/s token bucket with the
+    // app's events.send — errors must not be the thing that silences the error
+    // channel, which was the reason this never went through publishEvent.
     //
-    // sendText returns false when the socket is down (e.g. app_restored fires
-    // during setup(), pre-WiFi). Dropping those is correct — this is a report,
-    // not a queue, and a boot-time buffer would be a way to lose the panel to
-    // a retry storm rather than a way to learn anything.
-    sandbox.setTelemetryCallback([](const char* json) {
-        sandbox.ws().sendText(json);
-    });
+    // What the hub had to learn: `name` moved from the top level into `data`.
+    // device-agent.ts reads both, top level first — see the record() comment
+    // there. That column is what tells a compile error from a clean load, so
+    // it had to be taught the new shape BEFORE this firmware reached a device.
 
     sandbox.onConnected([]() {
         g_everConnected = true;

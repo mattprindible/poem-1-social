@@ -51,12 +51,23 @@ end
 
 function on_event(ctx, event)
   if event.name == 'button' then
-    local ok = events.send('button', { count = event.count })
     -- Show what the SEND returned, not merely that the press registered:
-    -- events.send returns false on rate limit or a failed send rather than
+    -- events.send reports a failure by its return value rather than by
     -- raising, so an app that ignores it reports success it never had.
+    --
+    -- Read the WORD, never the truthiness. Resident 0.7.0 returned a boolean
+    -- here; 0.8.0-dev returns 'sent', 'queued' or 'dropped' — and all three
+    -- strings are truthy in Lua, so the `ok and ... or ...` test this line
+    -- used to carry could not see a failure any more. It printed (ok) for a
+    -- dropped event: the exact silence this app exists to break, reintroduced
+    -- by the runtime telling us MORE than it used to. Both shapes are mapped
+    -- so the app reads the same before and after the firmware catches up.
+    local verdict = events.send('button', { count = event.count })
+    if verdict == true then verdict = 'sent' end
+    if verdict == false then verdict = 'dropped' end
+
     screen.fill_rect(40, 280, 880, 60, 255)
-    screen.text(40, 290, 'Sent: ' .. event.count .. (ok and ' (ok)' or ' (FAILED)'), 4)
+    screen.text(40, 290, 'Sent: ' .. event.count .. ' (' .. verdict .. ')', 4)
     screen.flip()
   end
 end

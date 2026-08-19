@@ -378,6 +378,18 @@ at once. Cache aggressively; treat the graph as advisory state, not live truth.
    to report anything else. Errors must not be the thing that silences the error
    channel.
 
+   > **SUPERSEDED 2026-08-18 by Resident 0.8.0-dev.** The runtime now queues its
+   > own telemetry frame (`{channel:"system", type:"telemetry", data:{name,
+   > generationId, error, count}}`) and drains it from `loop()`. The
+   > `setTelemetryCallback` described above was **removed** from `main.cpp` —
+   > with both in place every failure reached the hub twice. Upstream's version
+   > is also strictly better on the two points conceded here: it *queues* rather
+   > than dropping, so a report raised before WiFi is up survives, and it rides
+   > the control plane, so it still cannot spend the app's 5/s budget. The one
+   > thing that moved: `name` is now nested in `data`, and `record()` reads both.
+   > The reasoning above stands as the reason the capability exists; only the
+   > place it lives has changed.
+
    **`set-hub.sh` now confirms by the device's own word.** This needed one more
    firmware change than expected: nothing was sent on connect, so there was
    nothing to observe after a switch — a hub reconnect doesn't reboot, so no
