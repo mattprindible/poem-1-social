@@ -88,11 +88,14 @@ cat my-app.lua | ./send-app.sh --device-id <id>
 > public relay needs none. If you get a 401, the token for that hub isn't on
 > this machine — see [`server/README.md`](server/README.md).
 
-Apps in [`device-apps/`](device-apps/): `minute-clock`, `battery-watch`,
-`hello-status`, `first-light`, `hw-survey`, `nightfall` (a still night scene,
-drawn once and left alone — the calmest thing to leave on the panel), `standby`,
-`phone-home` (reports back to the hub — see [Hearing the device](#hearing-the-device)),
-plus three test fixtures — `runaway` (misbehaves deliberately, to exercise the
+Apps in [`device-apps/`](device-apps/): `minute-clock`, `hw-survey` (probes the
+board from Lua), `nightfall` (a still night scene, drawn once and left alone —
+the calmest thing to leave on the panel), `standby`, `phone-home` (reports back
+to the hub — see [Hearing the device](#hearing-the-device)), and two things
+other people's hubs made — `note-from-a-friend` and `san-map` — kept because
+they are what the social layer working actually looks like.
+
+Plus three test fixtures: `runaway` (misbehaves deliberately, to exercise the
 escape hatch), `wont-compile` (fails deliberately, to exercise the error
 channel; safe to push — it never draws) and `federated-hello` (renders who
 pushed it, used by [`test-federation.sh`](test-federation.sh)).
