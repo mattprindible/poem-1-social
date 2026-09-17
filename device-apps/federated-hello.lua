@@ -7,7 +7,9 @@
 --
 -- If this is on the panel, the whole trust chain in docs/social-plan.md held.
 
-local SENDER = "@hahacomputer.bsky.social"
+-- The suite's mutual (test-federation.sh, MUTUAL_HANDLE). Hardcoded because an
+-- app has no way to learn who pushed it: ctx carries no sender, by design.
+local SENDER = "@idiot.town"
 local ticks = 0
 
 local function draw()

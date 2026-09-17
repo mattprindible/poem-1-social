@@ -404,9 +404,10 @@ twin, or a federated hub receiving a push, actually needs answered. Nothing read
 it yet; it is the obvious hook for the version-skew problem this document leaves
 open, and it did not exist a week ago.
 
-That problem is no longer hypothetical here. As of 2026-08-18 the three test
-hubs deliberately run **different deploys**: `mfd-hub` carries the `data.name`
-fix, while `idiot-hub` and `rusty-hub` are still on 2026-08-05. Left that way on
+That problem is no longer hypothetical here. As of 2026-08-18 the hubs
+deliberately run **different deploys**: `mfd-hub` carries the `data.name` fix,
+while `idiot-hub`, `rusty-hub` and `san-hub` are still on 2026-08-05 (re-checked
+2026-09-16, suite 9/9 across the skew). Left that way on
 purpose rather than fixed, because deciding how updates propagate across a
 federated network is the open question, and a network where every hub is
 updated by one person from one machine cannot demonstrate the problem it needs
@@ -580,10 +581,12 @@ while both schemas still resolve. **Schema authority and network participation
 are independent** — which is exactly what makes a shared lexicon fabric rather
 than a hub everyone has to trust.
 
-## Knock-on: the test identities
+## Knock-on: the test identities — RESOLVED 2026-08-05
 
-`test-federation.sh` defaults to `hahacomputer.bsky.social` as the mutual. If
-that handle is retired in favour of something under `haha.computer`, the suite's
-defaults and the mutual-follow relationship both need updating — and the DID
-stays the same through a handle change, so the hub records and keys survive.
-Handle changes are cheap in atproto; this is bookkeeping, not migration.
+`test-federation.sh` used to default to `hahacomputer.bsky.social` as the
+mutual. That account became `san.haha.computer`, the authority, and so stopped
+being a participant. The suite's defaults moved to the cast above, and so did
+`device-apps/federated-hello.lua` (which names its sender on the panel), though that
+file lagged until 2026-09-16. The DID stayed the same through the handle change,
+so hub records and keys survived. Handle changes are cheap in atproto; this was
+bookkeeping, not migration.

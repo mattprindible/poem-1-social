@@ -30,7 +30,8 @@ The Poem/1's three quirks are expressed in Resident's own terms
 | Button (GPIO2)             | `systemButton`  | `ButtonDriver`      |
 
 > [!NOTE]
-> This board tracks **Resident 0.8.0-dev** (see [`sync.sh`](sync.sh)).
+> This board tracks **Resident's `main`**, on purpose — last synced at 0.8.5
+> (2026-09-16; see [`sync.sh`](sync.sh) and [Staying in sync](#staying-in-sync-with-resident)).
 > `systemDisplay` / `systemLED` were `statusDisplay` / `statusLED` before
 > Resident 0.7.0. The old names still compile as deprecated aliases, so an older
 > example you copy from will work — but they are the ones going away.

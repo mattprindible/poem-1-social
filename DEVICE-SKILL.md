@@ -78,8 +78,8 @@ end
 > mirror.** Since Resident 0.8.0-dev every event — driver and wire alike —
 > carries its payload in `event.data`, which is why the two used to disagree.
 > The flattened top-level copy is still written for one deprecation window, so
-> old apps keep working, and the apps in `device-apps/` here still read it.
-> Write `event.data.count` in anything new.
+> old apps keep working — but nothing in `device-apps/` reads it any more.
+> Write `event.data.count`.
 
 > [!IMPORTANT]
 > **A hold of ~3 seconds is reserved by the firmware.** Holding the button that
