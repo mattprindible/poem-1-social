@@ -298,9 +298,17 @@ end
   `debug`** — the sandbox closed in 0.8.0-dev (verified on this device: `os` and
   `require` are both `nil`). There is no clock via `os.time()`; read `ctx` or the
   `time.*` module instead.
-- A single dispatch is capped at ~2,000,000 VM instructions. Overrun aborts that
-  call with a `runtime_error` and **leaves the app running**, so an accidental
-  infinite loop in `on_tick` no longer takes the device out.
+- A single dispatch is capped by a WALL-CLOCK deadline, not an instruction
+  count — 0.8.0 replaced the old ~2,000,000-instruction cap with
+  `executionDeadlineMs`. Overrun aborts that call with a `runtime_error` and
+  **leaves the app running**, so an accidental infinite loop in `on_tick` still
+  does not take the device out. Upstream defaults to 1000 ms; this board sets
+  **5000 ms** (`device/src/main.cpp`, `makeConfig()`) because a quality e-ink
+  refresh blocks for ~1s inside `flip()`. Note the guard cannot interrupt a
+  blocking C binding — no Lua instruction runs in there — so an overrun is
+  reported on the first Lua line *after* the slow call returns. A soft deadline
+  of 1500 ms reports slow dispatches as `slow_dispatch` telemetry without
+  aborting them.
 - `ctx.generation_id` is `nil` here: it carries an id only when the *pushing*
   side stamps one, and `send-app.sh` does not.
 

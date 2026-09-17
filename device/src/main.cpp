@@ -66,6 +66,23 @@ Resident::SandboxConfig makeConfig() {
     // is set in onConnected() instead (see setup()).
     // persistApps defaults to true: last app auto-restores after the countdown.
 
+    // Raise the 0.8 wall-clock dispatch deadline off its 1000 ms default.
+    // Our dispatches are legitimately slow: a quality e-ink refresh blocks
+    // for ~1s inside flip(). The guard cannot fire mid-waveform — no Lua
+    // instruction runs inside a blocking C binding — so the panel is safe,
+    // but the timer still expires and the abort lands on the first Lua
+    // instruction AFTER flip() returns, which is where our apps stamp state
+    // and send events (san-map.lua:93 and :106, phone-home.lua:71,
+    // note-from-a-friend.lua:44, federated-hello.lua:40). Upstream sanctions
+    // raising it: "Raise it for a board whose apps legitimately run longer."
+    cfg.executionDeadlineMs = 5000;
+
+    // The soft deadline is measured at disarm, so unlike the hard one it DOES
+    // see the time spent inside flip(). Nothing aborts; a slow dispatch just
+    // reports itself as a `slow_dispatch` telemetry event. Set above a normal
+    // refresh so it flags the genuinely slow, not every quality flip.
+    cfg.executionSoftDeadlineMs = 1500;
+
     // Courier::Config has a constructor with default args, so designated
     // initializers don't compile under strict ESP-IDF builds.
     Courier::Config courier;
