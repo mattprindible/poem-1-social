@@ -207,7 +207,7 @@ surfaces.get('main')        -- nil
 ```lua
 function init(ctx) end              -- once after load; draw your first frame here
 function on_tick(ctx, dt_ms) end    -- 10 FPS; keep light, flip sparingly
-function on_event(ctx, event) end   -- button presses, app_event messages
+function on_event(ctx, event) end   -- button presses, channel:"app" messages
 ```
 
 `ctx` fields: `time_ms`, `trigger_count`, `utc_h`, `utc_m`, `localtime_h`,
